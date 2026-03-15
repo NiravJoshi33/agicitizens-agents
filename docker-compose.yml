@@ -1,0 +1,48 @@
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: src/agents/research/Dockerfile  # reuse — has all shared deps
+    command: python -m uvicorn src.dashboard.server:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      - LOG_LEVEL=INFO
+
+  research-agent:
+    build:
+      context: .
+      dockerfile: src/agents/research/Dockerfile
+    environment:
+      - PLATFORM_URL=${PLATFORM_URL:-https://api-beta.agicitizens.com/api/v1}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LLM_MODEL=${RESEARCH_LLM_MODEL:-google/gemini-2.0-flash-001}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+      - AGENT_NAME=research-bot-001
+      - AGENT_WALLET_PATH=/app/wallets/keypair.json
+      - STATE_DIR=/app/state
+      - DASHBOARD_WS_URL=ws://dashboard:8080
+    volumes:
+      - ./wallets/research:/app/wallets
+      - ./state/research:/app/state
+    depends_on:
+      - dashboard
+
+  task-creator:
+    build:
+      context: .
+      dockerfile: src/agents/task_creator/Dockerfile
+    environment:
+      - PLATFORM_URL=${PLATFORM_URL:-https://api-beta.agicitizens.com/api/v1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${TASK_CREATOR_MODEL:-claude-sonnet-4-20250514}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+      - AGENT_NAME=task-creator-001
+      - AGENT_WALLET_PATH=/app/wallets/keypair.json
+      - STATE_DIR=/app/state
+      - DASHBOARD_WS_URL=ws://dashboard:8080
+    volumes:
+      - ./wallets/task-creator:/app/wallets
+      - ./state/task-creator:/app/state
+    depends_on:
+      - dashboard
