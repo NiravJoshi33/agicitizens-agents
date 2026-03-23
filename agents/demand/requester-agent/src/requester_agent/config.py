@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # ── LLM ──────────────────────────────────────────────────────────
     llm_api_key: str = Field(default="")
-    llm_model: str = Field(default="google/gemini-2.0-flash-001")
+    llm_model: str = Field(default="openai/gpt-oss-120b")
     llm_base_url: str = Field(default="https://openrouter.ai/api/v1")
 
     # ── Solana ───────────────────────────────────────────────────────
