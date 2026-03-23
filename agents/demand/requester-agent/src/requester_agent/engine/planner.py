@@ -33,18 +33,46 @@ Every tick you receive your current state (wallet, balances, API key status), \
 recent history, and any SSE events. You use the tools provided to interact \
 with the platform.
 
+## CRITICAL: Registration & Auth Flow (if has_api_key is false)
+You MUST follow these steps IN ORDER. Do NOT skip ahead or hallucinate results.
+
+### Step 1: Get funds (if needed)
+- Call GET /v1/payments/info to check the registration fee.
+- Call POST /v1/faucet/fund with body {"wallet": "<your_wallet>"} to get SOL + USDC.
+
+### Step 2: Register the agent
+- Call POST /v1/agents/check-availability with body {"name": "<name>", "wallet": "<wallet>"}.
+- Call `sign_payment` with the recipient and amount from /v1/payments/info. \
+  IMPORTANT: The recipient from /v1/payments/info is an SPL token account (ATA), \
+  so ALWAYS set recipient_is_ata=true.
+- Call POST /v1/agents/register with:
+  - Header: x-payment = the x_payment value from sign_payment
+  - Body (JSON): {"name": "<name>", "wallet": "<wallet>", "categories": ["research"], \
+    "description": "A research agent ...", "basePrice": "1.00"}
+  - Note: "categories" MUST be an array of strings. "generation" is optional (default is fine). \
+    Do NOT include "generation" unless you know the exact valid value.
+
+### Step 3: Authenticate to get API key
+ONLY after registration succeeds (201 response):
+- Call POST /v1/auth/challenge with body {"wallet": "<wallet>"}.
+- Use `sign_message` tool to sign the exact challenge string returned.
+- Call POST /v1/auth/verify with body {"wallet": "<wallet>", "challenge": "<challenge>", \
+  "signature": "<signature>"}.
+- The response contains "apiKey" — use `store_secret` with name="AGIC_API_KEY" to save it.
+
+### IMPORTANT
+- Do NOT store a fake/hallucinated API key. Only store the apiKey from a real /v1/auth/verify 200 response.
+- Do NOT call /v1/auth/verify before registration is complete — you will get WALLET_NOT_REGISTERED.
+- After EACH tool call, WAIT for the actual result before deciding next steps.
+
 ## Rules
 1. **Only call API endpoints that exist in the OpenAPI spec** (provided below). \
    Never guess or hallucinate paths.
-2. If you are not registered yet (no API key), your first priority is registration.
-3. For Solana payments (registration fee, escrow), use the `solana_transfer` tool.
-4. After a successful Solana transfer, use the tx_signature in subsequent API calls \
-   (e.g. X-Payment header for registration, escrow confirmation).
-5. Respect budget limits.
-6. Learn from past results — if something failed, adapt your approach.
-7. Follow behavioral norms from citizen.md.
-8. If nothing needs doing, say so — don't make unnecessary calls.
-9. You can call multiple tools in parallel if they are independent.
+2. Respect budget limits.
+3. Learn from past results — if something failed, adapt your approach.
+4. Follow behavioral norms from citizen.md.
+5. If nothing needs doing, say so — don't make unnecessary calls.
+6. You can call multiple tools in parallel if they are independent.
 """
 
 # ── Tool Definitions (OpenAI function-calling format) ────────────────
@@ -97,21 +125,49 @@ TOOLS: list[dict[str, Any]] = [
                 "Build and sign a USDC transfer transaction WITHOUT submitting it. "
                 "Returns base64-encoded raw signed transaction bytes. Use this for "
                 "x402 payments — put the returned value in the x-payment header of "
-                "the API request. The platform submits the transaction on-chain."
+                "the API request. The platform submits the transaction on-chain. "
+                "IMPORTANT: Check the /v1/payments/info response — if the recipient "
+                "is described as an SPL token account (ATA), set recipient_is_ata=true."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "to_address": {
                         "type": "string",
-                        "description": "Recipient Solana address (vault, escrow, or wallet)",
+                        "description": "Recipient address from /v1/payments/info",
                     },
                     "amount": {
                         "type": "integer",
                         "description": "Amount in base units (1 USDC = 1,000,000)",
                     },
+                    "recipient_is_ata": {
+                        "type": "boolean",
+                        "description": "Set true if the recipient address is already an SPL token account (ATA), not a wallet address. Check the note field from /v1/payments/info.",
+                        "default": False,
+                    },
                 },
                 "required": ["to_address", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sign_message",
+            "description": (
+                "Sign an arbitrary message (e.g. an auth challenge) with the agent's "
+                "Solana wallet private key. Returns the base58-encoded Ed25519 signature. "
+                "Use this for wallet ownership verification / authentication challenges."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The exact message string to sign",
+                    },
+                },
+                "required": ["message"],
             },
         },
     },

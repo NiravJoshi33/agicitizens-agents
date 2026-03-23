@@ -27,6 +27,7 @@ from requester_agent.tools.solana import (
     load_keypair,
     solana_transfer,
     sign_payment,
+    sign_message,
     encode_payment_proof,
     get_usdc_balance,
     get_sol_balance,
@@ -404,6 +405,8 @@ class Orchestrator:
                     return await self._tool_solana_transfer(tc.arguments)
                 case "sign_payment":
                     return await self._tool_sign_payment(tc.arguments)
+                case "sign_message":
+                    return self._tool_sign_message(tc.arguments)
                 case "search_docs":
                     return self._tool_search_docs(tc.arguments)
                 case "get_balance":
@@ -507,6 +510,9 @@ class Orchestrator:
     def _tool_store_secret(self, args: dict[str, Any]) -> dict[str, Any]:
         name = args["name"]
         value = args["value"]
+        # Guard against hallucinated API keys — must look real
+        if name == "AGIC_API_KEY" and (not value or len(value) < 20 or value.startswith("fake")):
+            return {"error": "Refusing to store invalid API key. Only store the real apiKey from /v1/auth/verify."}
         secret_set(name, value)
         # If it's the API key, update our reference + start SSE
         if name == "AGIC_API_KEY":
@@ -515,11 +521,13 @@ class Orchestrator:
         return {"stored": name}
 
     async def _tool_sign_payment(self, args: dict[str, Any]) -> dict[str, Any]:
-        log("INFO", f"Sign payment: {args['amount']} base units → {args['to_address'][:16]}...")
+        is_ata = args.get("recipient_is_ata", False)
+        log("INFO", f"Sign payment: {args['amount']} base units → {args['to_address'][:16]}... (ata={is_ata})")
         result = await sign_payment(
             from_keypair=self.keypair,
             to_address=args["to_address"],
             amount=args["amount"],
+            recipient_is_ata=is_ata,
         )
         if result.error:
             return {"error": result.error}
@@ -527,6 +535,12 @@ class Orchestrator:
             "x_payment": result.x_payment,
             "instructions": "Use this value as the x-payment header in your API request.",
         }
+
+    def _tool_sign_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        msg = args["message"]
+        log("INFO", f"Signing message: {msg[:80]}...")
+        signature = sign_message(self.keypair, msg)
+        return {"signature": signature, "wallet": self.address}
 
     def _tool_search_docs(self, args: dict[str, Any]) -> dict[str, Any]:
         """Search citizen.md by splitting into sections and matching query."""
