@@ -26,6 +26,7 @@ from requester_agent.tools.metrics import metrics_inc
 from requester_agent.tools.solana import (
     load_keypair,
     solana_transfer,
+    sign_payment,
     encode_payment_proof,
     get_usdc_balance,
     get_sol_balance,
@@ -339,7 +340,8 @@ class Orchestrator:
                 await self._run_tool_loop(tick)
 
             except Exception as exc:
-                log("ERROR", f"Tick {tick} error: {exc}")
+                import traceback
+                log("ERROR", f"Tick {tick} error: {exc}\n{traceback.format_exc()}")
                 # Clean up history — remove any dangling assistant tool_calls
                 # that don't have matching tool results
                 self._cleanup_history()
@@ -400,6 +402,10 @@ class Orchestrator:
                     return await self._tool_http_request(tc.arguments)
                 case "solana_transfer":
                     return await self._tool_solana_transfer(tc.arguments)
+                case "sign_payment":
+                    return await self._tool_sign_payment(tc.arguments)
+                case "search_docs":
+                    return self._tool_search_docs(tc.arguments)
                 case "get_balance":
                     return await self._tool_get_balance()
                 case "store_secret":
@@ -507,6 +513,63 @@ class Orchestrator:
             self.api_key = value
             asyncio.create_task(self._start_sse(), name="sse")
         return {"stored": name}
+
+    async def _tool_sign_payment(self, args: dict[str, Any]) -> dict[str, Any]:
+        log("INFO", f"Sign payment: {args['amount']} base units → {args['to_address'][:16]}...")
+        result = await sign_payment(
+            from_keypair=self.keypair,
+            to_address=args["to_address"],
+            amount=args["amount"],
+        )
+        if result.error:
+            return {"error": result.error}
+        return {
+            "x_payment": result.x_payment,
+            "instructions": "Use this value as the x-payment header in your API request.",
+        }
+
+    def _tool_search_docs(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Search citizen.md by splitting into sections and matching query."""
+        import re
+        query = args.get("query", "").lower()
+        if not query:
+            return {"error": "query is required"}
+
+        content = fs_read("citizen.md")
+        if not content or not isinstance(content, str):
+            return {"error": "citizen.md not available"}
+
+        # Split by markdown headers
+        sections = re.split(r'(^#{1,3}\s+.+$)', content, flags=re.MULTILINE)
+        # Pair headers with their content
+        paired: list[tuple[str, str]] = []
+        i = 0
+        while i < len(sections):
+            if re.match(r'^#{1,3}\s+', sections[i]):
+                header = sections[i]
+                body = sections[i + 1] if i + 1 < len(sections) else ""
+                paired.append((header, body))
+                i += 2
+            else:
+                # Content before first header
+                if sections[i].strip():
+                    paired.append(("", sections[i]))
+                i += 1
+
+        # Find matching sections
+        matches: list[str] = []
+        total_len = 0
+        for header, body in paired:
+            full = f"{header}\n{body}"
+            if query in header.lower() or query in body.lower():
+                if total_len + len(full) > 4000:
+                    break
+                matches.append(full.strip())
+                total_len += len(full)
+
+        if not matches:
+            return {"result": f"No sections matching '{query}' found in citizen.md"}
+        return {"result": "\n\n".join(matches)}
 
     def _tool_read_file(self, args: dict[str, Any]) -> dict[str, Any]:
         content = fs_read(args["path"])

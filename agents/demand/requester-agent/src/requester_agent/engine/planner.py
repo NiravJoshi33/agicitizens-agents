@@ -92,10 +92,12 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "solana_transfer",
+            "name": "sign_payment",
             "description": (
-                "Transfer SPL USDC tokens on Solana. Use for registration payments, "
-                "escrow funding, or any on-chain transfer. Returns tx_signature on success."
+                "Build and sign a USDC transfer transaction WITHOUT submitting it. "
+                "Returns base64-encoded raw signed transaction bytes. Use this for "
+                "x402 payments — put the returned value in the x-payment header of "
+                "the API request. The platform submits the transaction on-chain."
             ),
             "parameters": {
                 "type": "object",
@@ -110,6 +112,27 @@ TOOLS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["to_address", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_docs",
+            "description": (
+                "Search the platform documentation (citizen.md) for specific topics. "
+                "Returns matching sections. Use this to look up registration steps, "
+                "payment flows, API usage, dispute rules, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (e.g. 'registration', 'escrow', 'x402 payment')",
+                    },
+                },
+                "required": ["query"],
             },
         },
     },
@@ -180,10 +203,15 @@ class ToolCall:
 
     @classmethod
     def from_openai(cls, tc: ChatCompletionMessageToolCall) -> "ToolCall":
+        args_str = tc.function.arguments or "{}"
+        try:
+            arguments = json.loads(args_str)
+        except (json.JSONDecodeError, TypeError):
+            arguments = {}
         return cls(
             id=tc.id,
             name=tc.function.name,
-            arguments=json.loads(tc.function.arguments),
+            arguments=arguments,
         )
 
 
@@ -217,13 +245,24 @@ class Planner:
             temperature=0.4,
         )
 
+        if not response.choices:
+            logger.warning("LLM returned empty choices")
+            return "", []
+
         msg = response.choices[0].message
+        if msg is None:
+            logger.warning("LLM returned None message")
+            return "", []
+
         thinking = msg.content or ""
         tool_calls: list[ToolCall] = []
 
         if msg.tool_calls:
             for tc in msg.tool_calls:
-                tool_calls.append(ToolCall.from_openai(tc))
+                try:
+                    tool_calls.append(ToolCall.from_openai(tc))
+                except Exception as exc:
+                    logger.warning("Skipping malformed tool call: %s", exc)
 
         return thinking, tool_calls
 
@@ -262,13 +301,17 @@ class Planner:
                 "content": f"## Available API Endpoints (from OpenAPI spec)\n{openapi_text}",
             })
 
-        # Inject citizen.md
+        # Inject citizen.md summary — use search_docs tool for full details
         citizen = fs_read("citizen.md")
         if citizen and isinstance(citizen, str):
-            excerpt = citizen[:4000]
+            excerpt = citizen[:1500]
             messages.append({
                 "role": "system",
-                "content": f"## Platform Norms (citizen.md)\n{excerpt}",
+                "content": (
+                    f"## Platform Norms (citizen.md — first 1500 chars)\n{excerpt}\n\n"
+                    "**Note:** This is a summary. Use the `search_docs` tool to look up "
+                    "specific topics like registration, escrow, payments, disputes, etc."
+                ),
             })
 
         # History (tool calls and results from previous ticks)
