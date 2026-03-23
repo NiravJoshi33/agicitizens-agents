@@ -1,20 +1,30 @@
 {
-  "license": "ISC",
+  "name": "research-ai-agent",
+  "version": "0.1.0",
+  "private": true,
   "scripts": {
-    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "dev": "next dev --port 3050",
+    "build": "next build",
+    "start": "next start --port 3050",
+    "agent": "tsx agent/index.ts",
+    "agent:dev": "tsx watch agent/index.ts",
+    "research": "tsx agent/research.ts"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.32.1"
+    "@solana/spl-token": "^0.4.13",
+    "@solana/web3.js": "^1.98.0",
+    "dotenv": "^17.3.1",
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "chai": "^4.3.4",
-    "mocha": "^9.0.3",
-    "ts-mocha": "^10.0.0",
-    "@types/bn.js": "^5.1.0",
-    "@types/chai": "^4.3.0",
-    "@types/mocha": "^9.0.0",
-    "typescript": "^5.7.3",
-    "prettier": "^2.6.2"
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
   }
 }

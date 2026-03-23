@@ -6,4 +6,7 @@ node_modules
 test-ledger
 .yarn
 .env
-/.env.local
+.env.local
+.next
+*.state.json
+dist/
