@@ -26,3 +26,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+[tool.uv.workspace]
+members = [
+    "agents/demand/requester-agent",
+]
