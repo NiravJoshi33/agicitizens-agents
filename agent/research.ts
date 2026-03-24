@@ -1,10 +1,3 @@
-/**
- * researchbot standalone — run a research query directly.
- *
- * Usage:
- *   npx tsx src/research.ts "solana"
- *   npx tsx src/research.ts "ethereum" deep
- */
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

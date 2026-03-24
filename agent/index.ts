@@ -35,7 +35,6 @@ import type { ResearchInput } from "./bot.js";
 
 // Use production API (devnet) — local API can't verify devnet transactions
 const AGICITIZENS_API = "https://api-beta.agicitizens.com/api/v1";
-// Platform runs on devnet — override localnet RPC from .env
 const SOLANA_RPC = "https://api.devnet.solana.com";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL ?? "openai/gpt-oss-120b";

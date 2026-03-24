@@ -313,24 +313,40 @@ export async function fetchDefiLlamaData(protocol: string): Promise<DefiProtocol
   }
 }
 
-// ── LLM Research ────────────────────────────────────────────
+// ── Research (Smart Agent) ───────────────────────────────────
+
+import { runResearchLoop } from "./brain";
 
 /**
- * Execute crypto research. Uses LLM if apiKey provided, otherwise
- * returns deterministic output (for testing).
+ * Execute crypto research.
+ *
+ * With LLM: runs an autonomous reasoning loop — the LLM decides
+ * which tools to call, observes results, and repeats until confident.
+ *
+ * Without LLM: runs a deterministic pipeline (for testing).
  */
 export async function executeResearch(
   input: ResearchInput,
   llmConfig?: { apiKey: string; model?: string },
 ): Promise<ResearchOutput> {
   const { query, chain = "solana", depth = "standard" } = input;
+
+  // LLM mode: autonomous reasoning loop
+  if (llmConfig?.apiKey) {
+    const maxIterations = depth === "quick" ? 3 : depth === "deep" ? 7 : 5;
+    return runResearchLoop(query, chain, depth, {
+      apiKey: llmConfig.apiKey,
+      model: llmConfig.model,
+      maxIterations,
+    });
+  }
+
+  // Deterministic fallback (no LLM)
   const sources: string[] = [];
   const keyFindings: string[] = [];
 
-  // Step 1: Identify token
   const coinGeckoId = await fetchCoinGeckoSearch(query);
 
-  // Step 2: Market data
   let marketData: MarketData | null = null;
   if (coinGeckoId) {
     marketData = await fetchCoinGeckoData(coinGeckoId);
@@ -340,7 +356,6 @@ export async function executeResearch(
     }
   }
 
-  // Step 3: DeFi data
   let defiExposure: DefiProtocol[] = [];
   if (depth !== "quick") {
     defiExposure = await fetchDefiLlamaData(query);
@@ -350,87 +365,14 @@ export async function executeResearch(
     }
   }
 
-  // Deterministic mode (no LLM)
-  if (!llmConfig?.apiKey) {
-    return {
-      token: coinGeckoId || query,
-      summary: `Research analysis for "${query}" on ${chain}. Market data ${marketData ? "available" : "unavailable"}.`,
-      risk_score: 5,
-      market_data: marketData ?? undefined,
-      defi_exposure: defiExposure.length > 0 ? defiExposure : undefined,
-      sentiment: "neutral",
-      key_findings: keyFindings,
-      sources,
-      generated_at: new Date().toISOString(),
-    };
-  }
-
-  // Step 4: LLM analysis
-  const systemPrompt = `You are a crypto research analyst. Provide concise, factual analysis.
-Output your analysis as JSON with these fields:
-- summary: 2-3 sentence overview
-- risk_score: 1 (lowest risk) to 10 (highest risk)
-- sentiment: one of "very_bearish", "bearish", "neutral", "bullish", "very_bullish"
-- key_findings: array of 3-5 key bullet points
-Only respond with valid JSON, no markdown.`;
-
-  const contextParts: string[] = [`Research query: ${query}`, `Chain: ${chain}`];
-  if (marketData) {
-    contextParts.push(
-      `Market data: Price $${marketData.price}, MCap ${marketData.market_cap}, Vol ${marketData.volume_24h}, 24h change ${marketData.price_change_24h}`,
-    );
-  }
-  if (defiExposure.length > 0) {
-    contextParts.push(
-      `DeFi protocols: ${defiExposure.map((d) => `${d.protocol} (TVL: ${d.tvl})`).join(", ")}`,
-    );
-  }
-
-  let llmAnalysis: {
-    summary?: string;
-    risk_score?: number;
-    sentiment?: string;
-    key_findings?: string[];
-  } = {};
-
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${llmConfig.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: llmConfig.model ?? "openai/gpt-oss-120b",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: contextParts.join("\n") },
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      }),
-    });
-
-    if (!res.ok) throw new Error(`OpenRouter error (${res.status})`);
-    const data = (await res.json()) as any;
-    const raw = data.choices?.[0]?.message?.content ?? "";
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch) llmAnalysis = JSON.parse(jsonMatch[0]);
-  } catch (err: any) {
-    console.warn(`[researchbot] LLM analysis failed:`, err.message);
-    llmAnalysis = { summary: `Research analysis for "${query}" on ${chain}.`, risk_score: 5, sentiment: "neutral" };
-  }
-
-  sources.push("openrouter.ai (LLM analysis)");
-
   return {
     token: coinGeckoId || query,
-    summary: llmAnalysis.summary || `Research completed for "${query}" on ${chain}.`,
-    risk_score: Math.min(10, Math.max(1, llmAnalysis.risk_score || 5)),
+    summary: `Research analysis for "${query}" on ${chain}. Market data ${marketData ? "available" : "unavailable"}.`,
+    risk_score: 5,
     market_data: marketData ?? undefined,
     defi_exposure: defiExposure.length > 0 ? defiExposure : undefined,
-    sentiment: llmAnalysis.sentiment || "neutral",
-    key_findings: [...keyFindings, ...(llmAnalysis.key_findings || [])],
+    sentiment: "neutral",
+    key_findings: keyFindings,
     sources,
     generated_at: new Date().toISOString(),
   };
