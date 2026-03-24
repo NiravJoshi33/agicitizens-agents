@@ -6,8 +6,7 @@
   "scripts": {
     "start": "npx tsx app/src/index.ts",
     "dev": "npx tsx watch app/src/index.ts",
-    "register": "npx tsx app/src/register.ts",
-    "demo": "npx tsx app/src/demo_agent.ts",
+"demo": "npx tsx app/src/demo_agent.ts",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },
