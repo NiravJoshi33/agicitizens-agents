@@ -3,7 +3,7 @@
  *
  * The planner:
  * 1. Receives current state (what tasks exist, what's pending, etc.)
- * 2. Has access to citizen.md (platform API docs)
+ * 2. Has access to citizen.md (platform API docs) - http://localhost:3099/citizen.md
  * 3. Decides what actions to take
  * 4. Returns tool calls (http_request, query_vault, generate_report)
  *
@@ -16,7 +16,12 @@ dotenv.config();
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-import { TOOL_DEFINITIONS, httpRequest, queryVault, generateReport } from "./tools";
+import {
+  TOOL_DEFINITIONS,
+  httpRequest,
+  queryVault,
+  generateReport,
+} from "./tools";
 
 interface PlannerConfig {
   apiBaseUrl: string;
@@ -33,33 +38,23 @@ interface ToolCall {
   };
 }
 
-/**
- * Ask the LLM planner what to do, then execute the tool calls it returns.
- */
 export async function runPlannerTick(config: PlannerConfig) {
   const systemPrompt = buildSystemPrompt(config);
   const userPrompt = buildTickPrompt(config);
 
-  // Ask LLM what to do
   const response = await callLLM(systemPrompt, userPrompt);
 
   if (!response.tool_calls || response.tool_calls.length === 0) {
-    // LLM decided there's nothing to do
     const content = response.content || "";
     if (content) console.log(`[Planner] LLM says: ${content}`);
     return;
   }
 
-  // Execute each tool call the LLM requested
   for (const toolCall of response.tool_calls) {
     await executeToolCall(toolCall, config);
   }
 }
 
-/**
- * System prompt — tells the LLM who it is and what it can do.
- * Includes citizen.md so the LLM knows the platform API.
- */
 function buildSystemPrompt(config: PlannerConfig): string {
   return `You are "mna-agent", an autonomous M&A research agent on the AGICitizens platform.
 
@@ -99,9 +94,6 @@ ${config.citizenMd}
 `;
 }
 
-/**
- * Tick prompt — tells the LLM to check for work and act.
- */
 function buildTickPrompt(config: PlannerConfig): string {
   return `It's time for a routine check. Please do the following in order:
 
@@ -116,12 +108,9 @@ function buildTickPrompt(config: PlannerConfig): string {
 Execute the appropriate tool calls now. Start with the heartbeat, then check tasks.`;
 }
 
-/**
- * Call OpenRouter LLM with tools.
- */
 async function callLLM(
   systemPrompt: string,
-  userPrompt: string,
+  userPrompt: string
 ): Promise<{ content?: string; tool_calls?: ToolCall[] }> {
   const response = await fetch(OPENROUTER_API_URL, {
     method: "POST",
@@ -156,9 +145,6 @@ async function callLLM(
   };
 }
 
-/**
- * Execute a single tool call returned by the LLM.
- */
 async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
   const { name, arguments: argsStr } = toolCall.function;
   let args: any;
@@ -170,12 +156,13 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
     return;
   }
 
-  console.log(`[Planner] Executing: ${name}(${JSON.stringify(args).substring(0, 200)})`);
+  console.log(
+    `[Planner] Executing: ${name}(${JSON.stringify(args).substring(0, 200)})`
+  );
 
   try {
     switch (name) {
       case "http_request": {
-        // Add auth header automatically
         const headers = {
           ...(args.headers || {}),
           Authorization: `Bearer ${config.apiKey}`,
@@ -186,17 +173,22 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
           headers,
           body: args.body,
         });
-        console.log(`[Planner] HTTP ${args.method} ${args.url} → ${result.status}`);
+        console.log(
+          `[Planner] HTTP ${args.method} ${args.url} → ${result.status}`
+        );
 
-        // Log important responses
         if (result.data?.data && Array.isArray(result.data.data)) {
           console.log(`[Planner]   Found ${result.data.data.length} items`);
         }
         if (result.data?.taskId) {
-          console.log(`[Planner]   Task: ${result.data.taskId} | Status: ${result.data.status}`);
+          console.log(
+            `[Planner]   Task: ${result.data.taskId} | Status: ${result.data.status}`
+          );
         }
         if (result.data?.bidId) {
-          console.log(`[Planner]   Bid: ${result.data.bidId} | Price: ${result.data.price}`);
+          console.log(
+            `[Planner]   Bid: ${result.data.bidId} | Price: ${result.data.price}`
+          );
         }
         if (result.data?.txSignature) {
           console.log(`[Planner]   Settlement TX: ${result.data.txSignature}`);
@@ -208,7 +200,6 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
         const deals = queryVault(args);
         console.log(`[Planner] Vault returned ${deals.length} deals`);
 
-        // Store deals in memory for generate_report to use
         (globalThis as any).__lastVaultDeals = deals;
         (globalThis as any).__lastVaultFilters = args;
         break;
@@ -216,7 +207,8 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
 
       case "generate_report": {
         const deals = args.deals || (globalThis as any).__lastVaultDeals || [];
-        const filters = args.filters || (globalThis as any).__lastVaultFilters || {};
+        const filters =
+          args.filters || (globalThis as any).__lastVaultFilters || {};
 
         if (deals.length === 0) {
           console.log(`[Planner] No deals to generate report for`);
@@ -226,7 +218,6 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
         const report = await generateReport(deals, filters);
         console.log(`[Planner] Report generated (${report.length} chars)`);
 
-        // Store for delivery
         (globalThis as any).__lastReport = report;
         (globalThis as any).__lastOutput = { summary: report, deals };
         break;

@@ -1,9 +1,3 @@
-/**
- * Generic tools available to the LLM planner.
- * The agent doesn't hardcode API paths — it uses these tools,
- * and the LLM constructs the actual requests based on citizen.md.
- */
-
 import { getDealsByFilters, DealFilters } from "./vault";
 import { generateResearchReport } from "./llm";
 
@@ -47,7 +41,7 @@ export function queryVault(filters: DealFilters): any[] {
 
 export async function generateReport(
   deals: any[],
-  filters: Record<string, any>,
+  filters: Record<string, any>
 ): Promise<string> {
   return generateResearchReport(deals, filters);
 }
@@ -71,11 +65,13 @@ export const TOOL_DEFINITIONS = [
           },
           url: {
             type: "string",
-            description: "Full URL including base URL and path (e.g., http://localhost:3099/v1/tasks)",
+            description:
+              "Full URL including base URL and path (e.g., http://localhost:3099/v1/tasks)",
           },
           headers: {
             type: "object",
-            description: "Additional HTTP headers (Authorization is added automatically)",
+            description:
+              "Additional HTTP headers (Authorization is added automatically)",
           },
           body: {
             type: "object",
@@ -97,11 +93,26 @@ export const TOOL_DEFINITIONS = [
         properties: {
           min_ebitda: { type: "number", description: "Minimum EBITDA" },
           max_ebitda: { type: "number", description: "Maximum EBITDA" },
-          min_revenue: { type: "number", description: "Minimum annual revenue" },
-          max_revenue: { type: "number", description: "Maximum annual revenue" },
-          min_asking_price: { type: "number", description: "Minimum asking price" },
-          max_asking_price: { type: "number", description: "Maximum asking price" },
-          industry_keywords: { type: "string", description: "Search keywords in deal description" },
+          min_revenue: {
+            type: "number",
+            description: "Minimum annual revenue",
+          },
+          max_revenue: {
+            type: "number",
+            description: "Maximum annual revenue",
+          },
+          min_asking_price: {
+            type: "number",
+            description: "Minimum asking price",
+          },
+          max_asking_price: {
+            type: "number",
+            description: "Maximum asking price",
+          },
+          industry_keywords: {
+            type: "string",
+            description: "Search keywords in deal description",
+          },
           limit: { type: "number", description: "Max results (default: 5)" },
         },
       },
