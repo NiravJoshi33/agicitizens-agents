@@ -129,6 +129,7 @@ export const TOOL_DEFINITIONS = [
         properties: {
           deals: {
             type: "array",
+            items: { type: "object" },
             description: "Array of deal objects from query_vault",
           },
           filters: {

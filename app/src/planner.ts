@@ -1,16 +1,3 @@
-/**
- * LLM Planner — decides what the agent should do each tick.
- *
- * The planner:
- * 1. Receives current state (what tasks exist, what's pending, etc.)
- * 2. Has access to citizen.md (platform API docs) - http://localhost:3099/citizen.md
- * 3. Decides what actions to take
- * 4. Returns tool calls (http_request, query_vault, generate_report)
- *
- * The agent NEVER hardcodes API paths — the LLM constructs them
- * based on citizen.md, just like Moltbook agents do.
- */
-
 import * as dotenv from "dotenv";
 dotenv.config();
 
@@ -38,10 +25,15 @@ interface ToolCall {
   };
 }
 
+// Track tasks we've already acted on to avoid duplicate bids/deliveries
+const bidTaskIds = new Set<string>();
+const deliveredTaskIds = new Set<string>();
+
 export async function runPlannerTick(config: PlannerConfig) {
   const systemPrompt = buildSystemPrompt(config);
   const userPrompt = buildTickPrompt(config);
 
+  // Round 1: Check platform state
   const response = await callLLM(systemPrompt, userPrompt);
 
   if (!response.tool_calls || response.tool_calls.length === 0) {
@@ -50,8 +42,26 @@ export async function runPlannerTick(config: PlannerConfig) {
     return;
   }
 
+  // Execute round 1 tool calls and collect results
+  const results: string[] = [];
   for (const toolCall of response.tool_calls) {
-    await executeToolCall(toolCall, config);
+    const result = await executeToolCall(toolCall, config);
+    if (result) results.push(result);
+  }
+
+  // Round 2: If we found tasks, ask LLM what to do with them
+  if (results.length > 0) {
+    const followUp = results.join("\n");
+    const round2 = await callLLM(
+      systemPrompt,
+      `Here are the results from checking the platform:\n\n${followUp}\n\nBased on these results, take the appropriate actions: bid on OPEN tasks (price = 80% of budget), deliver for IN_PROGRESS tasks (use query_vault first, then generate_report, then deliver via http_request), rate VERIFIED tasks 5/5. Only act if there are tasks to act on.`
+    );
+
+    if (round2.tool_calls) {
+      for (const toolCall of round2.tool_calls) {
+        await executeToolCall(toolCall, config);
+      }
+    }
   }
 }
 
@@ -89,23 +99,27 @@ Every 15 seconds, you check the platform and take appropriate actions:
 - Bid at 80% of the task budget
 - Rate requesters 5/5 after task is verified
 
-## Platform API Documentation (citizen.md)
-${config.citizenMd}
+## Key API Endpoints (from citizen.md)
+- POST /agents/me/heartbeat — send heartbeat (auth required)
+- GET /tasks?status=OPEN&category=research — find open tasks
+- GET /tasks?status=IN_PROGRESS&provider=mna-agent — find assigned tasks
+- GET /tasks?status=VERIFIED&provider=mna-agent — find tasks to rate
+- POST /bids/{taskId} — bid on a task: {"price":"8.00","message":"..."}
+- POST /tasks/{taskId}/deliver — deliver output: {"output":{...}}
+- POST /tasks/{taskId}/rate — rate requester: {"rating":5}
+All endpoints need Authorization: Bearer header.
 `;
 }
 
 function buildTickPrompt(config: PlannerConfig): string {
-  return `It's time for a routine check. Please do the following in order:
+  return `Execute ALL of these tool calls now (not just the first one):
 
-1. Send a heartbeat: POST ${config.apiBaseUrl}/agents/me/heartbeat
-2. Check for OPEN research tasks: GET ${config.apiBaseUrl}/tasks?status=OPEN&category=research
-   - If any found, bid on them
-3. Check for IN_PROGRESS tasks assigned to me: GET ${config.apiBaseUrl}/tasks?status=IN_PROGRESS&provider=${config.agentName}
-   - If any found, query the vault with task filters, generate a report, and deliver
-4. Check for VERIFIED tasks assigned to me: GET ${config.apiBaseUrl}/tasks?status=VERIFIED&provider=${config.agentName}
-   - If any found, rate the requester 5/5
+1. http_request: POST ${config.apiBaseUrl}/agents/me/heartbeat
+2. http_request: GET ${config.apiBaseUrl}/tasks?status=OPEN&category=research
+3. http_request: GET ${config.apiBaseUrl}/tasks?status=IN_PROGRESS&provider=${config.agentName}
+4. http_request: GET ${config.apiBaseUrl}/tasks?status=VERIFIED&provider=${config.agentName}
 
-Execute the appropriate tool calls now. Start with the heartbeat, then check tasks.`;
+Call all 4 http_requests. After getting results from #2, if tasks exist, bid on each (POST /bids/{taskId} with price=80% of budget). After #3, if tasks exist, use query_vault and generate_report then deliver.`;
 }
 
 async function callLLM(
@@ -126,7 +140,7 @@ async function callLLM(
       ],
       tools: TOOL_DEFINITIONS,
       tool_choice: "auto",
-      max_tokens: 4000,
+      max_tokens: 1500,
     }),
   });
 
@@ -145,7 +159,10 @@ async function callLLM(
   };
 }
 
-async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
+async function executeToolCall(
+  toolCall: ToolCall,
+  config: PlannerConfig
+): Promise<string | null> {
   const { name, arguments: argsStr } = toolCall.function;
   let args: any;
 
@@ -163,15 +180,52 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
   try {
     switch (name) {
       case "http_request": {
+        // Skip duplicate bids and deliveries
+        const urlStr: string = args.url || "";
+        if (args.method === "POST" && urlStr.includes("/bids/")) {
+          const m = urlStr.match(/\/bids\/([^/]+)/);
+          if (m && bidTaskIds.has(m[1])) {
+            console.log(`[Planner] Already bid on ${m[1]}, skipping`);
+            return null;
+          }
+        }
+        if (args.method === "POST" && urlStr.includes("/deliver")) {
+          const m = urlStr.match(/\/tasks\/([^/]+)\/deliver/);
+          if (m && deliveredTaskIds.has(m[1])) {
+            console.log(`[Planner] Already delivered ${m[1]}, skipping`);
+            return null;
+          }
+        }
+
         const headers = {
           ...(args.headers || {}),
           Authorization: `Bearer ${config.apiKey}`,
         };
+
+        // Auto-inject vault output when delivering (LLM forgets to include body)
+        let body = args.body;
+        if (
+          args.method === "POST" &&
+          args.url?.includes("/deliver") &&
+          !body?.output
+        ) {
+          const lastDeals = (globalThis as any).__lastVaultDeals;
+          if (lastDeals && lastDeals.length > 0) {
+            const lastFilters = (globalThis as any).__lastVaultFilters || {};
+            console.log(
+              `[Planner] Auto-generating report for ${lastDeals.length} deals...`
+            );
+            const report = await generateReport(lastDeals, lastFilters);
+            body = { output: { summary: report, deals: lastDeals } };
+            console.log(`[Planner] Report ready (${report.length} chars)`);
+          }
+        }
+
         const result = await httpRequest({
           method: args.method,
           url: args.url,
           headers,
-          body: args.body,
+          body,
         });
         console.log(
           `[Planner] HTTP ${args.method} ${args.url} → ${result.status}`
@@ -189,11 +243,21 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
           console.log(
             `[Planner]   Bid: ${result.data.bidId} | Price: ${result.data.price}`
           );
+          // Track successful bid
+          const bidMatch = urlStr.match(/\/bids\/([^/]+)/);
+          if (bidMatch) bidTaskIds.add(bidMatch[1]);
+        }
+        // Track successful delivery
+        if (result.status === 200 && urlStr.includes("/deliver")) {
+          const delMatch = urlStr.match(/\/tasks\/([^/]+)\/deliver/);
+          if (delMatch) deliveredTaskIds.add(delMatch[1]);
         }
         if (result.data?.txSignature) {
           console.log(`[Planner]   Settlement TX: ${result.data.txSignature}`);
         }
-        break;
+        return `${args.method} ${args.url} → ${result.status}: ${JSON.stringify(
+          result.data
+        ).substring(0, 500)}`;
       }
 
       case "query_vault": {
@@ -229,4 +293,5 @@ async function executeToolCall(toolCall: ToolCall, config: PlannerConfig) {
   } catch (err: any) {
     console.error(`[Planner] Tool ${name} failed: ${err.message}`);
   }
+  return null;
 }
