@@ -30,7 +30,7 @@ interface AgentStep {
   observation: string;
 }
 
-interface BrainConfig {
+export interface BrainConfig {
   apiKey: string;
   model?: string;
   maxIterations?: number;
@@ -65,6 +65,42 @@ tools.set("defillama_protocols", async (input) => {
     : "No DeFi protocols found matching this query.";
 });
 
+tools.set("http_request", async (input) => {
+  const { method = "GET", url, body, headers: rawHeaders } = input;
+  if (!url) return "Error: missing 'url' parameter";
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (rawHeaders) {
+      try { Object.assign(headers, JSON.parse(rawHeaders)); } catch {}
+    }
+
+    const opts: RequestInit = { method, headers, signal: AbortSignal.timeout(15_000) };
+    if (body && method !== "GET") opts.body = body;
+
+    const res = await fetch(url, opts);
+    const text = await res.text();
+
+    // Truncate large responses
+    const truncated = text.length > 3000 ? text.slice(0, 3000) + "\n...(truncated)" : text;
+    return `HTTP ${res.status}\n${truncated}`;
+  } catch (err: any) {
+    return `HTTP request failed: ${err.message}`;
+  }
+});
+
+tools.set("read_spec", async (input) => {
+  const { url } = input;
+  if (!url) return "Error: missing 'url' parameter";
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    const text = await res.text();
+    return text.length > 5000 ? text.slice(0, 5000) + "\n...(truncated)" : text;
+  } catch (err: any) {
+    return `Failed to read spec: ${err.message}`;
+  }
+});
+
 // ── System Prompt ───────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an autonomous crypto research agent. You THINK about what data you need, then ACT by calling tools, then OBSERVE results, and REPEAT until you have enough information.
@@ -83,7 +119,15 @@ const SYSTEM_PROMPT = `You are an autonomous crypto research agent. You THINK ab
    Search DeFi protocols by name. Returns TVL data for matching protocols.
    Parameters: {"protocol": "protocol name to search, e.g. 'uniswap'"}
 
-4. final_answer
+4. http_request
+   Make any HTTP request. Use this to interact with any API.
+   Parameters: {"method": "GET|POST|PUT|PATCH|DELETE", "url": "full URL", "body": "JSON string (optional)", "headers": "JSON string of extra headers (optional)"}
+
+5. read_spec
+   Read an API specification or documentation from a URL. Use this to learn how an unfamiliar API works before calling it.
+   Parameters: {"url": "URL to the spec/docs, e.g. 'https://api.example.com/docs'"}
+
+6. final_answer
    Call this ONLY when you have gathered enough data and are ready to deliver your research report.
    Parameters: {
      "token": "token identifier",
@@ -99,11 +143,12 @@ const SYSTEM_PROMPT = `You are an autonomous crypto research agent. You THINK ab
 - Use REAL data from tool results. NEVER fabricate prices, market caps, or TVL numbers.
 - If a tool returns an error or no data, adapt your plan — try a different approach or move on.
 - Call final_answer once you have sufficient data. Do not over-gather.
-- Your final summary must reference actual numbers from the tools, not made-up values.`;
+- Your final summary must reference actual numbers from the tools, not made-up values.
+- When interacting with an unfamiliar API, use read_spec first to learn the endpoints, then use http_request to call them.`;
 
 // ── OpenRouter Call ─────────────────────────────────────────
 
-async function callOpenRouter(
+export async function callOpenRouter(
   messages: Array<{ role: string; content: string }>,
   config: BrainConfig,
 ): Promise<string> {
@@ -128,7 +173,7 @@ async function callOpenRouter(
 
 // ── Parse LLM Response ──────────────────────────────────────
 
-function parseAction(raw: string): AgentAction | null {
+export function parseAction(raw: string): AgentAction | null {
   try {
     // Try direct parse
     const parsed = JSON.parse(raw);
