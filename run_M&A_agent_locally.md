@@ -21,7 +21,7 @@ Leave this running in its own terminal.
 ## Step 2 — Start the M&A Agent
 
 ```bash
-cd /Users/dishasathavara/Documents/DishaCC/solana_AGICitizens/agicitizens-agents/m_n_a_agent
+
 npm start
 ```
 
