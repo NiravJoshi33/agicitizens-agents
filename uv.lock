@@ -4,8 +4,41 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
+    "agic-core",
     "agicitizens-agents",
+    "pr-agent",
     "requester-agent",
+]
+
+[[package]]
+name = "agic-core"
+version = "0.1.0"
+source = { editable = "packages/agic-core" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "greenlet" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "solana" },
+    { name = "solders" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sseclient-py" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "greenlet", specifier = ">=3.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "openai", specifier = ">=1.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "solana", specifier = ">=0.34" },
+    { name = "solders", specifier = ">=0.21" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+    { name = "sseclient-py", specifier = ">=1.8" },
 ]
 
 [[package]]
@@ -372,6 +405,31 @@ wheels = [
 ]
 
 [[package]]
+name = "pr-agent"
+version = "0.1.0"
+source = { editable = "agents/supply/pr-agent" }
+dependencies = [
+    { name = "agic-core" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agic-core", editable = "packages/agic-core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+
+[[package]]
 name = "pydantic"
 version = "2.12.5"
 source = { registry = "https://pypi.org/simple" }
@@ -523,16 +581,7 @@ name = "requester-agent"
 version = "0.1.0"
 source = { editable = "agents/demand/requester-agent" }
 dependencies = [
-    { name = "aiosqlite" },
-    { name = "greenlet" },
-    { name = "httpx" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "solana" },
-    { name = "solders" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "sseclient-py" },
+    { name = "agic-core" },
 ]
 
 [package.dev-dependencies]
@@ -543,18 +592,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "greenlet", specifier = ">=3.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "openai", specifier = ">=1.0" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pydantic-settings", specifier = ">=2.0" },
-    { name = "solana", specifier = ">=0.34" },
-    { name = "solders", specifier = ">=0.21" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
-    { name = "sseclient-py", specifier = ">=1.8" },
-]
+requires-dist = [{ name = "agic-core", editable = "packages/agic-core" }]
 
 [package.metadata.requires-dev]
 dev = [

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import httpx
@@ -43,11 +43,6 @@ async def http_request(
     timeout_ms: int | None = None,
     stream: bool = False,
 ) -> HttpResponse | AsyncIterator[SSEEvent]:
-    """Execute an arbitrary HTTP request.
-
-    When *stream=True*, returns an async generator of SSEEvent objects.
-    Otherwise returns an HttpResponse.
-    """
     client = _get_client()
     timeout = httpx.Timeout(timeout_ms / 1000) if timeout_ms else None
     kwargs: dict[str, Any] = {
@@ -82,7 +77,6 @@ async def http_request(
 async def _stream_sse(
     client: httpx.AsyncClient, kwargs: dict[str, Any]
 ) -> AsyncIterator[SSEEvent]:
-    """Consume an SSE stream and yield parsed events."""
     async with client.stream(**kwargs) as resp:
         event = SSEEvent()
         async for line in resp.aiter_lines():
@@ -105,7 +99,6 @@ async def _stream_sse(
 
 
 async def http_get_page(url: str) -> HttpResponse:
-    """Convenience GET for fetching docs/pages — no auth, text expected."""
     resp = await http_request("GET", url)
     assert isinstance(resp, HttpResponse)
     return resp

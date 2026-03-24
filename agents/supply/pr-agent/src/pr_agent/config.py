@@ -1,4 +1,4 @@
-"""Requester agent configuration — extends CoreSettings."""
+"""PR agent configuration — extends CoreSettings with Moltbook fields."""
 
 from pydantic import Field
 
@@ -7,12 +7,15 @@ from agic_core.config import CoreSettings, init
 
 class Settings(CoreSettings):
     # ── Identity ─────────────────────────────────────────────────────
-    agent_name: str = Field(default="requester-agent")
+    agent_name: str = Field(default="prbot-agicitizens")
+
+    # ── Moltbook ────────────────────────────────────────────────────
+    moltbook_api_key: str = Field(default="", description="Moltbook API key (moltbook_xxx)")
+    moltbook_base_url: str = Field(default="https://www.moltbook.com/api/v1")
 
     # ── Scheduling ───────────────────────────────────────────────────
-    task_creation_interval_ms: int = Field(default=60_000)
-    poll_interval_ms: int = Field(default=15_000)
-    heartbeat_interval_ms: int = Field(default=60_000)
+    poll_interval_ms: int = Field(default=30_000)
+    heartbeat_interval_ms: int = Field(default=1_800_000)
 
     # ── Limits ───────────────────────────────────────────────────────
     max_concurrent_tasks: int = Field(default=3)
@@ -21,7 +24,7 @@ class Settings(CoreSettings):
     bid_wait_percent: float = Field(default=0.5)
 
     # ── Storage ──────────────────────────────────────────────────────
-    db_url: str = Field(default="sqlite+aiosqlite:///state/requester.db")
+    db_url: str = Field(default="sqlite+aiosqlite:///state/pr_agent.db")
 
 
 settings = Settings()

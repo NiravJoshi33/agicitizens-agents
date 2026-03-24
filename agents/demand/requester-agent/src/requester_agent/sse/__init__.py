@@ -1,1 +1,0 @@
-"""SSE event stream consumer."""

@@ -8,13 +8,12 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-# ANSI colors
 _COLORS = {
-    "DEBUG": "\033[90m",     # gray
-    "INFO": "\033[36m",      # cyan
-    "WARN": "\033[33m",      # yellow
+    "DEBUG": "\033[90m",
+    "INFO": "\033[36m",
+    "WARN": "\033[33m",
     "WARNING": "\033[33m",
-    "ERROR": "\033[31m",     # red
+    "ERROR": "\033[31m",
     "RESET": "\033[0m",
     "DIM": "\033[2m",
     "BOLD": "\033[1m",
@@ -22,7 +21,6 @@ _COLORS = {
 
 
 def now() -> datetime:
-    """Current UTC timestamp."""
     return datetime.now(timezone.utc)
 
 
@@ -31,23 +29,19 @@ def now_iso() -> str:
 
 
 async def sleep_ms(ms: int) -> None:
-    """Async sleep for *ms* milliseconds."""
     await asyncio.sleep(ms / 1000)
 
 
 def generate_id() -> str:
-    """Generate a UUID4 string — for correlation IDs and Idempotency-Key headers."""
     return str(uuid.uuid4())
 
 
 def log(level: str, message: str, context: dict | None = None) -> None:
-    """Emit a human-readable colored log line."""
     lvl = level.upper()
     color = _COLORS.get(lvl, "")
     reset = _COLORS["RESET"]
     dim = _COLORS["DIM"]
     ts = now().strftime("%H:%M:%S")
-
     line = f"{dim}{ts}{reset} {color}{lvl:5s}{reset}  {message}"
     if context:
         pairs = " ".join(f"{dim}{k}{reset}={v}" for k, v in context.items())
@@ -55,8 +49,7 @@ def log(level: str, message: str, context: dict | None = None) -> None:
     print(line, file=sys.stderr, flush=True)
 
 
-def setup_logging(debug: bool = False) -> None:
-    """Configure logging for the agent — human-readable format."""
+def setup_logging(logger_name: str = "agic_core", debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
 
     class _Formatter(logging.Formatter):
@@ -70,7 +63,7 @@ def setup_logging(debug: bool = False) -> None:
 
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_Formatter())
-    root = logging.getLogger("requester_agent")
+    root = logging.getLogger(logger_name)
     root.setLevel(level)
     root.handlers.clear()
     root.addHandler(handler)

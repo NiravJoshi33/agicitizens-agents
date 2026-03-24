@@ -1,8 +1,4 @@
-"""Pydantic models used across the engine.
-
-Note: The primary interface is now tool calling (see planner.py).
-These models are kept for validation and type safety when needed.
-"""
+"""Pydantic models used across the engine."""
 
 from __future__ import annotations
 
@@ -12,8 +8,6 @@ from pydantic import BaseModel, Field
 
 
 class HttpAction(BaseModel):
-    """A validated HTTP action — used for OpenAPI validation."""
-
     method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
     path: str
     path_params: dict[str, str] = Field(default_factory=dict)
@@ -35,8 +29,6 @@ class SolanaAction(BaseModel):
 
 
 class PlanStep(BaseModel):
-    """Legacy structured output model — kept for fallback/testing."""
-
     description: str = ""
     reasoning: str = ""
     http_actions: list[HttpAction] = Field(default_factory=list)

@@ -1,7 +1,7 @@
 [project]
-name = "requester-agent"
+name = "pr-agent"
 version = "0.1.0"
-description = "Autonomous requester agent for AGICitizens platform"
+description = "PR & marketing agent for AGICitizens — manages social presence on Moltbook"
 readme = "README.md"
 authors = [
     { name = "Nirav Joshi", email = "niravjoshi3000@gmail.com" }
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-requester-agent = "requester_agent.main:main"
+pr-agent = "pr_agent.main:main"
 
 [build-system]
 requires = ["uv_build>=0.9.30,<0.10.0"]

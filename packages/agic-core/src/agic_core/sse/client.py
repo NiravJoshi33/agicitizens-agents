@@ -9,7 +9,7 @@ from typing import Any, Callable, Coroutine
 
 import httpx
 
-from requester_agent.tools.utils import log
+from agic_core.tools.utils import log
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +17,11 @@ EventHandler = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
 
 class SSEListener:
-    """Consume server-sent events from the platform's /events/stream endpoint."""
-
     def __init__(
         self,
         base_url: str,
         api_key: str,
-        max_retries: int = 0,  # 0 = infinite
+        max_retries: int = 0,
         base_backoff_s: float = 1.0,
         max_backoff_s: float = 60.0,
     ) -> None:
@@ -37,19 +35,17 @@ class SSEListener:
         self._last_event_id: str = ""
 
     def on_event(self, handler: EventHandler) -> None:
-        """Register an async callback for incoming events."""
         self._handlers.append(handler)
 
     def stop(self) -> None:
         self._running = False
 
     async def listen(self) -> None:
-        """Connect to the SSE stream and dispatch events. Auto-reconnects on failure."""
         retries = 0
         while self._running:
             try:
                 await self._consume_stream()
-                retries = 0  # Reset on clean disconnect
+                retries = 0
             except (httpx.HTTPError, httpx.StreamError, ConnectionError) as exc:
                 retries += 1
                 if self._max_retries and retries > self._max_retries:
@@ -65,7 +61,6 @@ class SSEListener:
                 await asyncio.sleep(self._base_backoff)
 
     async def _consume_stream(self) -> None:
-        """Open the SSE connection and process events."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "text/event-stream",
@@ -86,9 +81,7 @@ class SSEListener:
                 async for line in resp.aiter_lines():
                     if not self._running:
                         break
-
                     if not line:
-                        # Empty line = event boundary
                         if data_lines:
                             data_str = "\n".join(data_lines)
                             await self._dispatch(event_type or "message", data_str, event_id)
@@ -96,7 +89,6 @@ class SSEListener:
                         data_lines = []
                         event_id = ""
                         continue
-
                     if line.startswith("event:"):
                         event_type = line[6:].strip()
                     elif line.startswith("data:"):
@@ -105,17 +97,14 @@ class SSEListener:
                         event_id = line[3:].strip()
                         self._last_event_id = event_id
                     elif line.startswith(":"):
-                        pass  # Comment / keepalive
+                        pass
 
     async def _dispatch(self, event_type: str, data_str: str, event_id: str) -> None:
-        """Parse and dispatch an SSE event to registered handlers."""
         try:
             payload = json.loads(data_str)
         except json.JSONDecodeError:
             payload = {"raw": data_str}
-
         log("DEBUG", f"SSE event: {event_type}", {"id": event_id})
-
         for handler in self._handlers:
             try:
                 await handler(event_type, payload)

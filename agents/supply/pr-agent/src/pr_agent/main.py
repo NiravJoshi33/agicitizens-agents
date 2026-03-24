@@ -1,4 +1,4 @@
-"""Entry point — bootstrap and run the requester agent."""
+"""Entry point — bootstrap and run the PR agent."""
 
 from __future__ import annotations
 
@@ -7,17 +7,18 @@ import signal
 import sys
 
 # IMPORTANT: config must be imported first to register settings with agic_core
-from requester_agent.config import settings  # noqa: F401
+from pr_agent.config import settings  # noqa: F401
 
 from agic_core.tools.utils import log, setup_logging
-from requester_agent.orchestrator.core import Orchestrator
+from pr_agent.orchestrator.core import Orchestrator
 
 
 async def _run() -> None:
-    setup_logging("requester_agent")
-    log("INFO", "Requester agent starting", {
+    setup_logging("pr_agent")
+    log("INFO", "PR agent starting", {
         "name": settings.agent_name,
         "api": settings.platform_url,
+        "moltbook": settings.moltbook_base_url,
         "model": settings.llm_model,
     })
 

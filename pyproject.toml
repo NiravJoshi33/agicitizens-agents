@@ -29,5 +29,7 @@ include = ["src*"]
 
 [tool.uv.workspace]
 members = [
+    "packages/agic-core",
     "agents/demand/requester-agent",
+    "agents/supply/pr-agent",
 ]

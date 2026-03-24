@@ -26,7 +26,7 @@ from spl.token.instructions import (
     transfer_checked as spl_transfer_checked,
 )
 
-from requester_agent.config import settings
+from agic_core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,11 @@ class TransferResult:
 
 @dataclass
 class SignedPayment:
-    x_payment: str  # base64-encoded raw signed transaction bytes
+    x_payment: str
     error: str | None = None
 
 
 def load_keypair(path: str | None = None) -> Keypair:
-    """Load or generate a Solana Ed25519 keypair from a JSON file."""
     kp_path = Path(path or settings.solana_keypair_path)
     if kp_path.exists():
         data = json.loads(kp_path.read_text())
@@ -58,7 +57,6 @@ def load_keypair(path: str | None = None) -> Keypair:
 
 
 async def get_usdc_balance(pubkey: str, rpc_url: str | None = None) -> int:
-    """Return USDC balance in base units for a given public key."""
     rpc = rpc_url or settings.solana_rpc_url
     mint = Pubkey.from_string(settings.usdc_mint_address)
     owner = Pubkey.from_string(pubkey)
@@ -71,7 +69,6 @@ async def get_usdc_balance(pubkey: str, rpc_url: str | None = None) -> int:
 
 
 async def get_sol_balance(pubkey: str, rpc_url: str | None = None) -> int:
-    """Return SOL balance in lamports."""
     rpc = rpc_url or settings.solana_rpc_url
     pk = Pubkey.from_string(pubkey)
     async with AsyncClient(rpc) as client:
@@ -88,35 +85,25 @@ async def solana_transfer(
     create_ata_if_missing: bool = True,
     recipient_is_ata: bool = False,
 ) -> TransferResult:
-    """Transfer SPL USDC from agent wallet to a target address.
-
-    Returns a TransferResult with tx_signature and confirmation status.
-    If recipient_is_ata is True, to_address is used directly as the SPL
-    token account destination (no ATA derivation).
-    """
     rpc = rpc_url or settings.solana_rpc_url
     usdc_mint = Pubkey.from_string(mint or settings.usdc_mint_address)
     recipient = Pubkey.from_string(to_address)
     sender = from_keypair.pubkey()
-
     sender_ata = get_associated_token_address(sender, usdc_mint)
 
     if recipient_is_ata:
-        recipient_ata = recipient  # already an ATA, use directly
+        recipient_ata = recipient
     else:
         recipient_ata = get_associated_token_address(recipient, usdc_mint)
 
     async with AsyncClient(rpc) as client:
         instructions = []
-
-        # Only create ATA if the recipient is a wallet (not already an ATA)
         if not recipient_is_ata and create_ata_if_missing:
             ata_info = await client.get_account_info(recipient_ata)
             if ata_info.value is None:
                 ix = create_associated_token_account(sender, recipient, usdc_mint)
                 instructions.append(ix)
 
-        # SPL transfer instruction
         transfer_ix = spl_transfer(
             SplTransferParams(
                 program_id=TOKEN_PROGRAM_ID,
@@ -128,10 +115,8 @@ async def solana_transfer(
         )
         instructions.append(transfer_ix)
 
-        # Build, sign, send
         recent = await client.get_latest_blockhash()
         blockhash = recent.value.blockhash
-
         msg = Message.new_with_blockhash(instructions, sender, blockhash)
         tx = Transaction.new_unsigned(msg)
         tx.sign([from_keypair], blockhash)
@@ -139,8 +124,6 @@ async def solana_transfer(
         try:
             result = await client.send_transaction(tx)
             sig = str(result.value)
-
-            # Wait for confirmation
             from solders.signature import Signature as SolSignature
             await client.confirm_transaction(SolSignature.from_string(sig), commitment=Confirmed)
             return TransferResult(tx_signature=sig, confirmed=True)
@@ -157,14 +140,6 @@ async def sign_payment(
     mint: str | None = None,
     recipient_is_ata: bool = False,
 ) -> SignedPayment:
-    """Build and sign a USDC transfer but do NOT submit it.
-
-    Returns base64-encoded signed transaction bytes for the x-payment header.
-    The platform will submit the transaction on-chain (x402 protocol).
-
-    If recipient_is_ata is True, to_address is treated as an existing SPL token
-    account (ATA) and used directly as the transfer destination.
-    """
     rpc = rpc_url or settings.solana_rpc_url
     usdc_mint = Pubkey.from_string(mint or settings.usdc_mint_address)
     recipient = Pubkey.from_string(to_address)
@@ -172,22 +147,19 @@ async def sign_payment(
     sender_ata = get_associated_token_address(sender, usdc_mint)
 
     if recipient_is_ata:
-        recipient_ata = recipient  # already an ATA, use directly
+        recipient_ata = recipient
     else:
         recipient_ata = get_associated_token_address(recipient, usdc_mint)
 
     try:
         async with AsyncClient(rpc) as client:
             instructions = []
-
-            # Only create ATA if the recipient is a wallet (not already an ATA)
             if not recipient_is_ata:
                 ata_info = await client.get_account_info(recipient_ata)
                 if ata_info.value is None:
                     ix = create_associated_token_account(sender, recipient, usdc_mint)
                     instructions.append(ix)
 
-            # Use transferChecked so the mint is explicit in the instruction
             transfer_ix = spl_transfer_checked(
                 TransferCheckedParams(
                     program_id=TOKEN_PROGRAM_ID,
@@ -196,14 +168,13 @@ async def sign_payment(
                     dest=recipient_ata,
                     owner=sender,
                     amount=amount,
-                    decimals=6,  # USDC has 6 decimals
+                    decimals=6,
                 )
             )
             instructions.append(transfer_ix)
 
             recent = await client.get_latest_blockhash()
             blockhash = recent.value.blockhash
-
             msg = Message.new_with_blockhash(instructions, sender, blockhash)
             tx = Transaction.new_unsigned(msg)
             tx.sign([from_keypair], blockhash)
@@ -219,10 +190,6 @@ async def sign_payment(
 
 
 def sign_message(keypair: Keypair, message: str) -> str:
-    """Sign an arbitrary message with the wallet's Ed25519 key.
-
-    Returns base58-encoded signature string.
-    """
     from solders.presigner import Presigner  # noqa: F401
     msg_bytes = message.encode("utf-8")
     sig = keypair.sign_message(msg_bytes)
@@ -230,7 +197,6 @@ def sign_message(keypair: Keypair, message: str) -> str:
 
 
 def encode_payment_proof(tx_signature: str, payer: str, amount_usdc: float) -> str:
-    """Encode a payment proof as base64 JSON for the X-Payment header."""
     proof = {
         "tx_signature": tx_signature,
         "payer": payer,
