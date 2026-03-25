@@ -217,10 +217,14 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a cached file from the state directory.",
+            "description": "Read a file from the state directory. Supports chunked reading with offset/limit for large files (e.g. spilled API responses in tmp/).",
             "parameters": {
                 "type": "object",
-                "properties": {"path": {"type": "string"}},
+                "properties": {
+                    "path": {"type": "string", "description": "File path relative to state dir"},
+                    "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)", "default": 0},
+                    "limit": {"type": "integer", "description": "Max characters to read (default 4000)", "default": 4000},
+                },
                 "required": ["path"],
             },
         },

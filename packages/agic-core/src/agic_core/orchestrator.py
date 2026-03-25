@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -38,6 +39,7 @@ from agic_core.tools.validation import OpenAPIValidator
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY = 40
+SPILL_THRESHOLD = 1500  # tool results larger than this (chars) are spilled to file
 
 
 class BaseOrchestrator:
@@ -321,6 +323,7 @@ class BaseOrchestrator:
             tick += 1
             try:
                 log("INFO", f"=== Tick {tick} ===")
+                self._cleanup_tmp_files()
                 state = await self._gather_state()
 
                 sse_events = self._drain_sse_queue()
@@ -378,10 +381,11 @@ class BaseOrchestrator:
             for tc in tool_calls:
                 result = await self._execute_tool(tc)
                 log("INFO", f"Tool {tc.name} → {json.dumps(result, default=str)[:200]}")
+                content = self._spill_large_result(tc.name, tc.id, result)
                 self._append_history({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result, default=str),
+                    "content": content,
                 })
                 await self._persist_event(f"tool.{tc.name}", {"tick": tick, "args": tc.arguments, "result": result})
 
@@ -513,6 +517,8 @@ class BaseOrchestrator:
         raw_tx = args["transaction"]
         log("INFO", f"Signing prepared transaction ({len(raw_tx)} chars)")
         try:
+            # Platform may return unpadded base64 — add padding if needed
+            raw_tx += "=" * (-len(raw_tx) % 4)
             tx_bytes = b64decode(raw_tx)
             tx = VersionedTransaction.from_bytes(tx_bytes)
             msg = tx.message
@@ -577,8 +583,15 @@ class BaseOrchestrator:
         if content is None:
             return {"error": f"File not found: {args['path']}"}
         if isinstance(content, bytes):
-            return {"content": content.decode("utf-8", errors="replace")[:4000]}
-        return {"content": content[:4000]}
+            content = content.decode("utf-8", errors="replace")
+        offset = args.get("offset", 0)
+        limit = args.get("limit", 4000)
+        chunk = content[offset:offset + limit]
+        result: dict[str, Any] = {"content": chunk}
+        if offset + limit < len(content):
+            result["remaining"] = len(content) - offset - limit
+            result["hint"] = f"Use offset={offset + limit} to read the next chunk"
+        return result
 
     # ── State ────────────────────────────────────────────────────────
 
@@ -632,6 +645,82 @@ class BaseOrchestrator:
         self._history.append(entry)
         if len(self._history) > MAX_HISTORY:
             self._history = self._history[-MAX_HISTORY:]
+
+    # ── Large-result spill-to-file ─────────────────────────────────────
+
+    # Tools whose results should never be spilled (they exist to bring data INTO context)
+    _NO_SPILL_TOOLS = frozenset({"read_file", "search_docs", "get_balance", "sign_payment", "sign_message", "store_secret", "wait"})
+
+    def _spill_large_result(self, tool_name: str, tool_call_id: str, result: dict[str, Any]) -> str:
+        """If a tool result exceeds SPILL_THRESHOLD, write to a temp file and return a compact reference."""
+        if tool_name in self._NO_SPILL_TOOLS:
+            return json.dumps(result, default=str)
+        serialized = json.dumps(result, default=str)
+        if len(serialized) <= SPILL_THRESHOLD:
+            return serialized
+
+        # Write full result to a temp file the agent can read_file later
+        filename = f"tmp/{tool_name}_{tool_call_id[:8]}.json"
+        fs_write(filename, serialized)
+
+        # Build a compact summary the LLM can act on without reading the file
+        summary = self._summarize_result(result)
+        compact = {
+            "_file": filename,
+            "_hint": f"Full response ({len(serialized)} chars) saved to '{filename}'. Use read_file to inspect details.",
+            **summary,
+        }
+        return json.dumps(compact, default=str)
+
+    @staticmethod
+    def _summarize_result(obj: Any, depth: int = 0) -> dict[str, Any]:
+        """Extract a compact summary of a tool result for LLM context."""
+        summary: dict[str, Any] = {}
+        if not isinstance(obj, dict):
+            return summary
+
+        for key, val in obj.items():
+            if isinstance(val, list):
+                # Show array length + first item's keys (or first item if scalar/short)
+                summary[key] = f"[{len(val)} items]"
+                if val:
+                    first = val[0]
+                    if isinstance(first, dict):
+                        # Show keys of first item and a preview of identifiers
+                        preview_keys = list(first.keys())[:6]
+                        summary[f"{key}[0]_keys"] = preview_keys
+                        # Extract common identifier fields from first few items
+                        for id_key in ("id", "taskId", "bidId", "name", "post_id", "type", "title", "status"):
+                            vals = [item.get(id_key) for item in val[:5] if isinstance(item, dict) and id_key in item]
+                            if vals:
+                                suffix = ", ..." if len(val) > 5 else ""
+                                summary[f"{key}.{id_key}s"] = [str(v)[:60] for v in vals] + ([suffix] if suffix else [])
+                    elif isinstance(first, str) and len(str(first)) < 100:
+                        summary[f"{key}_preview"] = [str(v)[:60] for v in val[:3]]
+            elif isinstance(val, dict) and depth < 1:
+                # Recurse one level for nested dicts
+                nested = BaseOrchestrator._summarize_result(val, depth + 1)
+                if nested:
+                    summary[key] = nested
+                else:
+                    summary[key] = f"{{...{len(val)} keys}}"
+            elif isinstance(val, str) and len(val) > 200:
+                summary[key] = val[:200] + "..."
+            else:
+                summary[key] = val
+
+        return summary
+
+    def _cleanup_tmp_files(self) -> None:
+        """Remove spilled temp files older than 10 minutes."""
+        import time
+        tmp_dir = Path(settings.state_dir) / "tmp"
+        if not tmp_dir.exists():
+            return
+        cutoff = time.time() - 600
+        for f in tmp_dir.iterdir():
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
 
     def _cleanup_history(self) -> None:
         if not self._history:

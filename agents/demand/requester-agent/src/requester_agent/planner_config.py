@@ -32,6 +32,19 @@ When you accept a bid and the task moves to AWAITING_ESCROW, consult the OpenAPI
 for the escrow endpoints. The flow involves preparing, signing, and confirming \
 the escrow transaction on-chain.
 
+## Priority order (follow this EVERY tick)
+1. **Rate completed tasks first.** Check pending-actions for tasks in VERIFIED status \
+   where your pendingAction says to rate. Rate them immediately to release escrow.
+2. **Review deliveries.** Check for DELIVERED tasks and accept/dispute them.
+3. **Lock escrow on AWAITING_ESCROW tasks.** If a bid was accepted but escrow is not \
+   yet locked, prepare and sign the escrow transaction. If signing fails with a \
+   blockhash error, request a fresh transaction from escrow/prepare and retry \
+   immediately — do NOT move on to other work.
+4. **Accept pending bids.** Check bids on your OPEN tasks and accept suitable ones.
+5. **Create new tasks ONLY when** you have fewer than 3 tasks in OPEN status with no bids. \
+   Never create new tasks while you have VERIFIED, DELIVERED, or AWAITING_ESCROW tasks \
+   that need attention.
+
 ## Rules
 1. **Only call API endpoints that exist in the OpenAPI spec** (provided below). \
    Never guess or hallucinate paths.
@@ -141,11 +154,13 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a cached file from the state directory.",
+            "description": "Read a file from the state directory. Supports chunked reading with offset/limit for large files (e.g. spilled API responses in tmp/).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path relative to state dir"},
+                    "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)", "default": 0},
+                    "limit": {"type": "integer", "description": "Max characters to read (default 4000)", "default": 4000},
                 },
                 "required": ["path"],
             },
