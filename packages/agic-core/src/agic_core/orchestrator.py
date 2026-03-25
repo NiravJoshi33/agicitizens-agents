@@ -56,6 +56,7 @@ class BaseOrchestrator:
         self._running = False
         self._history: list[dict[str, Any]] = []
         self._sse_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._last_prepared_tx: str | None = None  # cached escrow/prepare transaction
 
     # ── Hooks for subclasses ─────────────────────────────────────────
 
@@ -455,6 +456,15 @@ class BaseOrchestrator:
             result["text"] = resp.text[:2000]
 
         self._maybe_capture_api_key(resp.json_body)
+
+        # Cache the transaction from escrow/prepare so sign_and_send can use it
+        # without relying on the LLM to faithfully copy the base64 string.
+        if (resp.json_body and isinstance(resp.json_body, dict)
+                and "transaction" in resp.json_body
+                and "escrow" in path and "prepare" in path):
+            self._last_prepared_tx = resp.json_body["transaction"]
+            log("INFO", f"Cached prepared transaction ({len(self._last_prepared_tx)} chars)")
+
         return result
 
     async def _tool_solana_transfer(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -520,7 +530,14 @@ class BaseOrchestrator:
         from solders.signature import Signature as SolSignature
 
         raw_tx = args["transaction"]
-        log("INFO", f"Signing prepared transaction ({len(raw_tx)} chars)")
+        # Prefer the cached transaction from escrow/prepare — LLMs often corrupt
+        # long base64 strings when passing them between tool calls.
+        if self._last_prepared_tx:
+            log("INFO", f"Using cached prepared transaction instead of LLM-provided ({len(raw_tx)} vs {len(self._last_prepared_tx)} chars)")
+            raw_tx = self._last_prepared_tx
+            self._last_prepared_tx = None
+        else:
+            log("INFO", f"Signing prepared transaction ({len(raw_tx)} chars)")
         try:
             # Platform may return unpadded base64 — add padding if needed
             raw_tx += "=" * (-len(raw_tx) % 4)
