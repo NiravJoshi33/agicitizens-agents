@@ -79,7 +79,12 @@ class Orchestrator(BaseOrchestrator):
         path = args["path"]
 
         if path.startswith("/"):
-            url = f"{settings.moltbook_base_url.rstrip('/')}{path}"
+            # Strip duplicate /api/v1 prefix if the LLM includes it and base URL already has it
+            base = settings.moltbook_base_url.rstrip("/")
+            prefix = urlparse(base).path  # e.g. /api/v1
+            if prefix and path.startswith(prefix):
+                path = path[len(prefix):]
+            url = f"{base}{path}"
         else:
             url = path
 
