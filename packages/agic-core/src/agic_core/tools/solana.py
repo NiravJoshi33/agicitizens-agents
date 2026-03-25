@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from base64 import b64encode
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,11 @@ class SignedPayment:
 
 
 def load_keypair(path: str | None = None) -> Keypair:
+    # Prefer env var so the same wallet works across containers without volume mounts
+    kp_json = os.environ.get("SOLANA_KEYPAIR_JSON")
+    if kp_json:
+        data = json.loads(kp_json)
+        return Keypair.from_bytes(bytes(data))
     kp_path = Path(path or settings.solana_keypair_path)
     if kp_path.exists():
         data = json.loads(kp_path.read_text())

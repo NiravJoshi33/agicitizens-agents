@@ -1,48 +1,57 @@
 services:
-  dashboard:
+  requester-agent:
     build:
       context: .
-      dockerfile: src/agents/research/Dockerfile  # reuse — has all shared deps
-    command: python -m uvicorn src.dashboard.server:app --host 0.0.0.0 --port 8080
-    ports:
-      - "8080:8080"
+      dockerfile: agents/demand/requester-agent/Dockerfile
+    env_file:
+      - .env.production
     environment:
-      - LOG_LEVEL=INFO
-
-  research-agent:
-    build:
-      context: .
-      dockerfile: src/agents/research/Dockerfile
-    environment:
-      - PLATFORM_URL=${PLATFORM_URL:-https://api-beta.agicitizens.com/api/v1}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - LLM_MODEL=${RESEARCH_LLM_MODEL:-google/gemini-2.0-flash-001}
-      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
-      - AGENT_NAME=research-bot-001
-      - AGENT_WALLET_PATH=/app/wallets/keypair.json
-      - STATE_DIR=/app/state
-      - DASHBOARD_WS_URL=ws://dashboard:8080
+      - AGENT_NAME=${REQUESTER_AGENT_NAME:-requester-agent}
+      - SOLANA_KEYPAIR_JSON=${REQUESTER_KEYPAIR_JSON}
+      - DB_URL=sqlite+aiosqlite:///state/requester.db
+      - STATE_DIR=state
     volumes:
-      - ./wallets/research:/app/wallets
-      - ./state/research:/app/state
-    depends_on:
-      - dashboard
+      - requester-state:/app/state
+      - ./agents/demand/requester-agent/persona.md:/app/persona.md:ro
+    restart: unless-stopped
 
-  task-creator:
+  pr-agent:
     build:
       context: .
-      dockerfile: src/agents/task_creator/Dockerfile
+      dockerfile: agents/supply/pr-agent/Dockerfile
+    env_file:
+      - .env.production
     environment:
-      - PLATFORM_URL=${PLATFORM_URL:-https://api-beta.agicitizens.com/api/v1}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - ANTHROPIC_MODEL=${TASK_CREATOR_MODEL:-claude-sonnet-4-20250514}
-      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
-      - AGENT_NAME=task-creator-001
-      - AGENT_WALLET_PATH=/app/wallets/keypair.json
-      - STATE_DIR=/app/state
-      - DASHBOARD_WS_URL=ws://dashboard:8080
+      - AGENT_NAME=${PR_AGENT_NAME:-prbot-agicitizens}
+      - SOLANA_KEYPAIR_JSON=${PR_AGENT_KEYPAIR_JSON}
+      - DB_URL=sqlite+aiosqlite:///state/pr_agent.db
+      - STATE_DIR=state
+      - MOLTBOOK_API_KEY=${MOLTBOOK_API_KEY}
+      - MOLTBOOK_BASE_URL=${MOLTBOOK_BASE_URL:-https://www.moltbook.com/api/v1}
+      - POLL_INTERVAL_MS=${PR_POLL_INTERVAL_MS:-30000}
+      - HEARTBEAT_INTERVAL_MS=${PR_HEARTBEAT_INTERVAL_MS:-1800000}
     volumes:
-      - ./wallets/task-creator:/app/wallets
-      - ./state/task-creator:/app/state
-    depends_on:
-      - dashboard
+      - pr-agent-state:/app/state
+      - ./agents/supply/pr-agent/persona.md:/app/persona.md:ro
+    restart: unless-stopped
+
+  supacheck-agent:
+    build:
+      context: .
+      dockerfile: agents/supply/supacheck-agent/Dockerfile
+    env_file:
+      - .env.production
+    environment:
+      - AGENT_NAME=${SUPACHECK_AGENT_NAME:-supacheck-agent}
+      - SOLANA_KEYPAIR_JSON=${SUPACHECK_KEYPAIR_JSON}
+      - DB_URL=sqlite+aiosqlite:///state/supacheck_agent.db
+      - STATE_DIR=state
+    volumes:
+      - supacheck-state:/app/state
+      - ./agents/supply/supacheck-agent/persona.md:/app/persona.md:ro
+    restart: unless-stopped
+
+volumes:
+  requester-state:
+  pr-agent-state:
+  supacheck-state:

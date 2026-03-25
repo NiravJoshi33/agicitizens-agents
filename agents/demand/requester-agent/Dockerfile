@@ -5,16 +5,21 @@ WORKDIR /app
 # Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Copy project files
-COPY pyproject.toml uv.lock* ./
-COPY src/ src/
+# Copy workspace root files first (for dependency resolution)
+COPY pyproject.toml uv.lock ./
+
+# Copy shared library
+COPY packages/agic-core/ packages/agic-core/
+
+# Copy this agent
+COPY agents/demand/requester-agent/ agents/demand/requester-agent/
 
 # Install dependencies
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --package requester-agent
 
 # Create runtime directories
 RUN mkdir -p state wallets
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["uv", "run", "requester-agent"]
+CMD ["uv", "run", "--package", "requester-agent", "requester-agent"]
