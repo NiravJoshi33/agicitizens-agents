@@ -16,44 +16,21 @@ Every tick you receive your current state (wallet, balances, API key status), \
 recent history, and any SSE events. You use the tools provided to interact \
 with the platform.
 
-## CRITICAL: Registration & Auth Flow (if has_api_key is false)
-You MUST follow these steps IN ORDER. Do NOT skip ahead or hallucinate results.
+## Onboarding (if has_api_key is false)
+Use `search_docs` and the OpenAPI spec to discover the platform's onboarding flow. \
+Follow the steps described in citizen.md IN ORDER. Do NOT skip ahead or hallucinate results.
 
-### Step 1: Get funds (if needed)
-- Call GET /v1/payments/info to check the registration fee.
-- Call POST /v1/faucet/fund with body {"wallet": "<your_wallet>"} to get SOL + USDC.
-
-### Step 2: Register the agent
-- Call POST /v1/agents/check-availability with body {"name": "<name>", "wallet": "<wallet>"}.
-- Call `sign_payment` with the recipient and amount from /v1/payments/info. \
-  IMPORTANT: The recipient from /v1/payments/info is an SPL token account (ATA), \
-  so ALWAYS set recipient_is_ata=true.
-- Call POST /v1/agents/register with:
-  - Header: x-payment = the x_payment value from sign_payment
-  - Body (JSON): {"name": "<name>", "wallet": "<wallet>", "categories": ["research"], \
-    "description": "A research agent ...", "basePrice": "1.00"}
-  - Note: "categories" MUST be an array of strings. "generation" is optional (default is fine). \
-    Do NOT include "generation" unless you know the exact valid value.
-
-### Step 3: Authenticate to get API key
-ONLY after registration succeeds (201 response):
-- Call POST /v1/auth/challenge with body {"wallet": "<wallet>"}.
-- Use `sign_message` tool to sign the exact challenge string returned.
-- Call POST /v1/auth/verify with body {"wallet": "<wallet>", "challenge": "<challenge>", \
-  "signature": "<signature>"}.
-- The response contains "apiKey" — use `store_secret` with name="AGIC_API_KEY" to save it.
-
-### IMPORTANT
-- Do NOT store a fake/hallucinated API key. Only store the apiKey from a real /v1/auth/verify 200 response.
-- Do NOT call /v1/auth/verify before registration is complete — you will get WALLET_NOT_REGISTERED.
+Key principles:
+- Check your balances first. If you need funds, look for a faucet endpoint in the API spec.
+- The payment recipient from the payments info endpoint is an SPL token account (ATA) — \
+  ALWAYS set recipient_is_ata=true when signing registration payments.
+- Do NOT store a fake/hallucinated API key. Only store a real apiKey from a verified auth response.
 - After EACH tool call, WAIT for the actual result before deciding next steps.
 
-## Escrow Flow (after accepting a bid)
-When you accept a bid, the task moves to AWAITING_ESCROW. To lock escrow:
-1. Call POST /v1/tasks/{taskId}/escrow/prepare with body {"requesterWallet": "<your_wallet>"}
-2. Use the `sign_and_send_transaction` tool with the base64 "transaction" from the response
-3. Call POST /v1/tasks/{taskId}/escrow with body {"txSignature": "<signature_from_step_2>"}
-This moves the task to IN_PROGRESS.
+## Escrow Flow
+When you accept a bid and the task moves to AWAITING_ESCROW, consult the OpenAPI spec \
+for the escrow endpoints. The flow involves preparing, signing, and confirming \
+the escrow transaction on-chain.
 
 ## Rules
 1. **Only call API endpoints that exist in the OpenAPI spec** (provided below). \
@@ -101,7 +78,7 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "to_address": {"type": "string", "description": "Recipient address from /v1/payments/info"},
+                    "to_address": {"type": "string", "description": "Recipient address"},
                     "amount": {"type": "integer", "description": "Amount in base units (1 USDC = 1,000,000)"},
                     "recipient_is_ata": {"type": "boolean", "description": "Set true if the recipient address is already an SPL token account (ATA).", "default": False},
                 },
@@ -180,14 +157,13 @@ TOOLS: list[dict[str, Any]] = [
             "name": "sign_and_send_transaction",
             "description": (
                 "Sign a base64-encoded unsigned transaction with the agent's wallet and send it to Solana. "
-                "Use this for escrow: call POST /tasks/{taskId}/escrow/prepare to get the unsigned transaction, "
-                "then pass the base64 'transaction' field here. Returns the txSignature to confirm via "
-                "POST /tasks/{taskId}/escrow."
+                "Use this for escrow or any on-chain operation where the platform provides an unsigned transaction. "
+                "Returns the transaction signature."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "transaction": {"type": "string", "description": "Base64-encoded unsigned transaction from escrow/prepare"},
+                    "transaction": {"type": "string", "description": "Base64-encoded unsigned transaction"},
                 },
                 "required": ["transaction"],
             },
