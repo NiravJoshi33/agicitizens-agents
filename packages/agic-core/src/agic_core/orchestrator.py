@@ -262,28 +262,54 @@ class BaseOrchestrator:
         if url:
             try:
                 resp = await http_get_page(url)
-                self.citizen_md = resp.text
-                fs_write("citizen.md", self.citizen_md)
-                self._extract_api_url_from_docs(self.citizen_md)
-                log("INFO", "citizen.md fetched", {"url": url, "length": len(self.citizen_md)})
-                return
+                text = resp.text
+                # Validate it's actually markdown, not an HTML page
+                if text.strip().startswith("<!") or text.strip().startswith("<html"):
+                    log("WARN", f"citizen.md URL returned HTML, not markdown: {url}")
+                else:
+                    self.citizen_md = text
+                    fs_write("citizen.md", self.citizen_md)
+                    self._extract_api_url_from_docs(self.citizen_md)
+                    log("INFO", "citizen.md fetched", {"url": url, "length": len(self.citizen_md)})
+                    return
             except Exception as exc:
                 log("WARN", f"Failed to fetch citizen.md from {url}: {exc}")
 
+        # Fallback: try convention paths on the platform base URL
+        base = settings.platform_url.rstrip("/")
+        for path in [f"{base}/citizen.md", f"{base}/docs/citizen.md"]:
+            try:
+                resp = await http_get_page(path)
+                text = resp.text
+                if text.strip().startswith("<!") or text.strip().startswith("<html"):
+                    continue
+                self.citizen_md = text
+                fs_write("citizen.md", self.citizen_md)
+                self._extract_api_url_from_docs(self.citizen_md)
+                log("INFO", "citizen.md fetched", {"url": path, "length": len(self.citizen_md)})
+                return
+            except Exception:
+                continue
+
         cached = fs_read("citizen.md")
-        if cached and isinstance(cached, str):
+        if cached and isinstance(cached, str) and not cached.strip().startswith("<!"):
             self.citizen_md = cached
             log("WARN", "Using cached citizen.md")
         else:
             log("WARN", "No citizen.md available")
 
     def _extract_api_url_from_docs(self, text: str) -> None:
+        # Only use docs to derive API base if we don't already have one from OpenAPI
+        if self.api_base_url:
+            return
         urls = re.findall(r'https?://[^\s"\'<>`)]+', text)
         for url in urls:
-            if any(seg in url.lower() for seg in ["/api/", "/v1/", "/v2/"]):
-                clean = url.rstrip("/.,;:)")
-                if clean != self.api_base_url:
-                    self.api_base_url = clean
+            clean = url.rstrip("/.,;:)")
+            if any(seg in clean.lower() for seg in ["/api/", "/v1/", "/v2/"]):
+                # Extract scheme + host only (don't include /v1 path to avoid double-prefix)
+                m = re.match(r'(https?://[^/]+)', clean)
+                if m:
+                    self.api_base_url = m.group(1)
                     log("INFO", f"API base URL from docs: {self.api_base_url}")
                 return
 
@@ -319,7 +345,13 @@ class BaseOrchestrator:
         max_rounds = 10
         for round_num in range(max_rounds):
             state = await self._gather_state()
-            thinking, tool_calls = await self.planner.decide(state, self._history)
+            try:
+                thinking, tool_calls = await asyncio.wait_for(
+                    self.planner.decide(state, self._history), timeout=120
+                )
+            except asyncio.TimeoutError:
+                log("WARN", f"Planner timed out on tick {tick} round {round_num}, skipping")
+                break
 
             if thinking:
                 log("INFO", f"Planner: {thinking[:200]}")
@@ -370,6 +402,8 @@ class BaseOrchestrator:
                     return await self._tool_solana_transfer(tc.arguments)
                 case "sign_payment":
                     return await self._tool_sign_payment(tc.arguments)
+                case "sign_and_send_transaction":
+                    return await self._tool_sign_and_send_transaction(tc.arguments)
                 case "sign_message":
                     return self._tool_sign_message(tc.arguments)
                 case "search_docs":
@@ -467,6 +501,34 @@ class BaseOrchestrator:
             return {"error": result.error}
         return {"x_payment": result.x_payment, "instructions": "Use this value as the x-payment header in your API request."}
 
+    async def _tool_sign_and_send_transaction(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Sign a base64-encoded unsigned transaction and send it to Solana."""
+        from base64 import b64decode
+        from solana.rpc.async_api import AsyncClient
+        from solana.rpc.commitment import Confirmed
+        from solders.transaction import VersionedTransaction
+        from solders.message import to_bytes_versioned
+        from solders.signature import Signature as SolSignature
+
+        raw_tx = args["transaction"]
+        log("INFO", f"Signing prepared transaction ({len(raw_tx)} chars)")
+        try:
+            tx_bytes = b64decode(raw_tx)
+            tx = VersionedTransaction.from_bytes(tx_bytes)
+            msg = tx.message
+            msg_bytes = to_bytes_versioned(msg)
+            sig = self.keypair.sign_message(msg_bytes)
+            signed_tx = VersionedTransaction.populate(msg, [sig])
+
+            async with AsyncClient(settings.solana_rpc_url) as client:
+                result = await client.send_transaction(signed_tx)
+                tx_sig = str(result.value)
+                await client.confirm_transaction(SolSignature.from_string(tx_sig), commitment=Confirmed)
+                return {"tx_signature": tx_sig, "confirmed": True}
+        except Exception as exc:
+            log("ERROR", f"Sign-and-send failed: {exc}")
+            return {"error": str(exc), "confirmed": False}
+
     def _tool_sign_message(self, args: dict[str, Any]) -> dict[str, Any]:
         msg = args["message"]
         log("INFO", f"Signing message: {msg[:80]}...")
@@ -540,6 +602,14 @@ class BaseOrchestrator:
     async def _start_sse(self) -> None:
         if not self.api_key:
             return
+        # Cancel any existing SSE task to avoid duplicates
+        for task in asyncio.all_tasks():
+            if task.get_name() == "sse" and task is not asyncio.current_task() and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         listener = SSEListener(base_url=self.api_base_url, api_key=self.api_key)
         listener.on_event(self._on_sse_event)
         await listener.listen()

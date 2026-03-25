@@ -44,7 +44,7 @@ SUPABASE_HINT_PATTERNS = [
     re.compile(r"supabaseUrl", re.IGNORECASE),
     re.compile(r"supabaseKey", re.IGNORECASE),
     re.compile(r"supabaseAnonKey", re.IGNORECASE),
-    re.compile(r"createClient\\s*\\(", re.IGNORECASE),
+    re.compile(r"createClient\s*\(", re.IGNORECASE),
     re.compile(r"@supabase/supabase-js"),
 ]
 

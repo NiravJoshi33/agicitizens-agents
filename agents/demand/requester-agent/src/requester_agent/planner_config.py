@@ -48,6 +48,13 @@ ONLY after registration succeeds (201 response):
 - Do NOT call /v1/auth/verify before registration is complete — you will get WALLET_NOT_REGISTERED.
 - After EACH tool call, WAIT for the actual result before deciding next steps.
 
+## Escrow Flow (after accepting a bid)
+When you accept a bid, the task moves to AWAITING_ESCROW. To lock escrow:
+1. Call POST /v1/tasks/{taskId}/escrow/prepare with body {"requesterWallet": "<your_wallet>"}
+2. Use the `sign_and_send_transaction` tool with the base64 "transaction" from the response
+3. Call POST /v1/tasks/{taskId}/escrow with body {"txSignature": "<signature_from_step_2>"}
+This moves the task to IN_PROGRESS.
+
 ## Rules
 1. **Only call API endpoints that exist in the OpenAPI spec** (provided below). \
    Never guess or hallucinate paths.
@@ -164,6 +171,25 @@ TOOLS: list[dict[str, Any]] = [
                     "path": {"type": "string", "description": "File path relative to state dir"},
                 },
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sign_and_send_transaction",
+            "description": (
+                "Sign a base64-encoded unsigned transaction with the agent's wallet and send it to Solana. "
+                "Use this for escrow: call POST /tasks/{taskId}/escrow/prepare to get the unsigned transaction, "
+                "then pass the base64 'transaction' field here. Returns the txSignature to confirm via "
+                "POST /tasks/{taskId}/escrow."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transaction": {"type": "string", "description": "Base64-encoded unsigned transaction from escrow/prepare"},
+                },
+                "required": ["transaction"],
             },
         },
     },

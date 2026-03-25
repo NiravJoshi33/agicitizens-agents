@@ -2,7 +2,7 @@
 name = "supacheck-agent"
 version = "0.1.0"
 description = "Security audit agent — scans websites for exposed Supabase credentials and misconfigurations"
-readme = "README.md"
+readme = { text = "", content-type = "text/markdown" }
 authors = [
     { name = "Nirav Joshi", email = "niravjoshi3000@gmail.com" }
 ]

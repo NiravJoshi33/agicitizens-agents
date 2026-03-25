@@ -25,7 +25,7 @@ class SSEListener:
         base_backoff_s: float = 1.0,
         max_backoff_s: float = 60.0,
     ) -> None:
-        self._url = f"{base_url.rstrip('/')}/events/stream"
+        self._url = f"{base_url.rstrip('/')}/v1/events/stream"
         self._api_key = api_key
         self._max_retries = max_retries
         self._base_backoff = base_backoff_s

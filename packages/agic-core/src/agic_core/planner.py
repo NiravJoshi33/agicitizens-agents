@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Any, Callable
 
+import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageToolCall
 from pathlib import Path
@@ -65,6 +66,7 @@ class Planner:
         self._client = AsyncOpenAI(
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
+            timeout=httpx.Timeout(120.0, connect=10.0),
         )
         self._model = settings.llm_model
         self._system_prompt = system_prompt
@@ -79,13 +81,17 @@ class Planner:
         messages = self._build_messages(state, history)
         logger.debug("Planner messages: %d", len(messages))
 
-        response = await self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            tools=self._tools,
-            tool_choice="auto",
-            temperature=0.4,
-        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                tools=self._tools,
+                tool_choice="auto",
+                temperature=0.4,
+            )
+        except (httpx.TimeoutException, Exception) as exc:
+            logger.warning("LLM request failed: %s", exc)
+            return "", []
 
         if not response.choices:
             logger.warning("LLM returned empty choices")

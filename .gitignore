@@ -4,6 +4,8 @@ __pycache__/
 *$py.class
 
 wallets/
+state/
+state
 
 # C extensions
 *.so
