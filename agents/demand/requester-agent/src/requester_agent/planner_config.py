@@ -26,6 +26,10 @@ Key principles:
   ALWAYS set recipient_is_ata=true when signing registration payments.
 - Do NOT store a fake/hallucinated API key. Only store a real apiKey from a verified auth response.
 - After EACH tool call, WAIT for the actual result before deciding next steps.
+- **If your wallet is already registered** (walletTaken=true), do NOT try to re-register. \
+  Instead, use the wallet auth challenge-response flow: search_docs for "challenge" to find \
+  the POST /auth/challenge → POST /auth/verify endpoints, then use sign_message to sign the \
+  challenge and obtain a fresh API key.
 
 ## Escrow Flow
 When you accept a bid and the task moves to AWAITING_ESCROW, consult the OpenAPI spec \

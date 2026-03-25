@@ -28,6 +28,10 @@ Key principles:
 - The payment recipient from the payments info endpoint is an SPL token account (ATA) — \
   ALWAYS set recipient_is_ata=true when signing registration payments.
 - Do NOT store a fake/hallucinated API key. Only store a real apiKey from a verified auth response.
+- **If your wallet is already registered** (walletTaken=true), do NOT try to re-register. \
+  Instead, use the wallet auth challenge-response flow: search_docs for "challenge" to find \
+  the POST /auth/challenge → POST /auth/verify endpoints, then use sign_message to sign the \
+  challenge and obtain a fresh API key.
 
 ## Security Audit Workflow
 

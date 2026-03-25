@@ -506,12 +506,17 @@ class BaseOrchestrator:
         return {"x_payment": result.x_payment, "instructions": "Use this value as the x-payment header in your API request."}
 
     async def _tool_sign_and_send_transaction(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Sign a base64-encoded unsigned transaction and send it to Solana."""
+        """Sign a base64-encoded unsigned transaction and send it to Solana.
+
+        Replaces the blockhash in the transaction with a fresh one before
+        signing, so that stale blockhashes from the platform don't cause
+        preflight failures.
+        """
         from base64 import b64decode
         from solana.rpc.async_api import AsyncClient
         from solana.rpc.commitment import Confirmed
         from solders.transaction import VersionedTransaction
-        from solders.message import to_bytes_versioned
+        from solders.message import MessageV0, to_bytes_versioned
         from solders.signature import Signature as SolSignature
 
         raw_tx = args["transaction"]
@@ -522,11 +527,31 @@ class BaseOrchestrator:
             tx_bytes = b64decode(raw_tx)
             tx = VersionedTransaction.from_bytes(tx_bytes)
             msg = tx.message
-            msg_bytes = to_bytes_versioned(msg)
-            sig = self.keypair.sign_message(msg_bytes)
-            signed_tx = VersionedTransaction.populate(msg, [sig])
 
             async with AsyncClient(settings.solana_rpc_url) as client:
+                # Fetch a fresh blockhash and swap it in before signing
+                recent = await client.get_latest_blockhash()
+                fresh_blockhash = recent.value.blockhash
+
+                if isinstance(msg, MessageV0):
+                    msg = MessageV0(
+                        header=msg.header,
+                        account_keys=msg.account_keys,
+                        recent_blockhash=fresh_blockhash,
+                        instructions=msg.instructions,
+                        address_table_lookups=msg.address_table_lookups,
+                    )
+                else:
+                    # Legacy message
+                    from solders.message import Message as LegacyMessage
+                    msg = LegacyMessage.new_with_blockhash(
+                        msg.instructions, msg.account_keys[0], fresh_blockhash,
+                    )
+
+                msg_bytes = to_bytes_versioned(msg)
+                sig = self.keypair.sign_message(msg_bytes)
+                signed_tx = VersionedTransaction.populate(msg, [sig])
+
                 result = await client.send_transaction(signed_tx)
                 tx_sig = str(result.value)
                 await client.confirm_transaction(SolSignature.from_string(tx_sig), commitment=Confirmed)
