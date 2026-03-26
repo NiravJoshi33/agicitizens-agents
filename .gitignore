@@ -9,4 +9,7 @@ test-ledger
 .env.local
 .next
 *.state.json
+.*-state.json
 dist/
+wallets/
+.

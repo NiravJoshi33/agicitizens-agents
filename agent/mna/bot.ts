@@ -1,16 +1,7 @@
-/**
- * mna/bot.ts — M&A Deals data layer.
- *
- * Loads deals from CSV, applies filters, returns matching deals.
- * Pure data logic — no platform coupling.
- */
-
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseQuery } from "./brain.js";
-
-// ── Types ───────────────────────────────────────────────────
 
 export interface Deal {
   id: string;
@@ -25,7 +16,7 @@ export interface DealFilter {
   field: "asking_price" | "annual_revenue" | "ebitda" | "sde";
   operator: "gt" | "gte" | "lt" | "lte" | "eq" | "between";
   value: number;
-  value2?: number; // for "between"
+  value2?: number;
 }
 
 export interface ParsedQuery {
@@ -47,8 +38,6 @@ export interface MnaOutput {
   deals: Deal[];
   generated_at: string;
 }
-
-// ── CSV Loader ──────────────────────────────────────────────
 
 let cachedDeals: Deal[] | null = null;
 
@@ -78,7 +67,8 @@ function parseCSVLine(line: string): string[] {
 }
 
 function parseNumber(val: string): number | null {
-  if (!val || val.trim() === "" || val.trim().toLowerCase() === "null") return null;
+  if (!val || val.trim() === "" || val.trim().toLowerCase() === "null")
+    return null;
   const cleaned = val.replace(/[$,\s]/g, "");
   const num = Number(cleaned);
   return isNaN(num) ? null : num;
@@ -93,7 +83,6 @@ export function loadDeals(csvPath?: string): Deal[] {
   const raw = readFileSync(path, "utf-8");
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
 
-  // Skip header
   const deals: Deal[] = [];
   for (let i = 1; i < lines.length; i++) {
     const fields = parseCSVLine(lines[i]);
@@ -113,8 +102,6 @@ export function loadDeals(csvPath?: string): Deal[] {
   console.log(`   ✓ Loaded ${deals.length} deals from CSV`);
   return deals;
 }
-
-// ── Filter Engine ───────────────────────────────────────────
 
 function applyFilter(deal: Deal, filter: DealFilter): boolean {
   const val = deal[filter.field];
@@ -141,18 +128,15 @@ function applyFilter(deal: Deal, filter: DealFilter): boolean {
 export function filterDeals(deals: Deal[], parsed: ParsedQuery): Deal[] {
   let results = deals;
 
-  // Apply numeric filters
   for (const filter of parsed.filters) {
     results = results.filter((d) => applyFilter(d, filter));
   }
 
-  // Apply keyword search on description
   if (parsed.keyword) {
     const kw = parsed.keyword.toLowerCase();
     results = results.filter((d) => d.description.toLowerCase().includes(kw));
   }
 
-  // Sort
   if (parsed.sort_by) {
     const field = parsed.sort_by as keyof Deal;
     const order = parsed.sort_order === "desc" ? -1 : 1;
@@ -163,15 +147,12 @@ export function filterDeals(deals: Deal[], parsed: ParsedQuery): Deal[] {
     });
   }
 
-  // Limit
   if (parsed.limit && parsed.limit > 0) {
     results = results.slice(0, parsed.limit);
   }
 
   return results;
 }
-
-// ── Main Entry ──────────────────────────────────────────────
 
 export async function executeQuery(
   input: MnaInput,
@@ -190,7 +171,6 @@ export async function executeQuery(
     };
   }
 
-  // Ask LLM to parse the natural language query into filters
   const parsed = await parseQuery(query, llmConfig);
 
   console.log(`   Filters: ${JSON.stringify(parsed.filters)}`);

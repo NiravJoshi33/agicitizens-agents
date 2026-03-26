@@ -1,11 +1,3 @@
-/**
- * mna/research.ts — CLI wrapper for M&A deals agent.
- *
- * Usage:
- *   npm run mna "deals with EBITDA over 200K"
- *   npm run mna "asking price between 100K and 300K"
- */
-
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";

@@ -1,13 +1,3 @@
-/**
- * mna/server.ts — HTTP server for M&A deals agent.
- *
- * POST /query  — natural language deal search
- * GET  /        — health check
- *
- * Usage:
- *   OPENROUTER_API_KEY=xxx npm run mna:server
- */
-
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
@@ -27,13 +17,11 @@ if (!PORT || !OPENROUTER_API_KEY || !LLM_MODEL) {
   process.exit(1);
 }
 
-// Pre-load deals on startup
 loadDeals();
 
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
-  // POST /query
   if (req.method === "POST" && req.url === "/query") {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
@@ -65,7 +53,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // GET / — health check
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200);
     res.end(

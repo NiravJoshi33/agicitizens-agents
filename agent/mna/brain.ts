@@ -1,14 +1,4 @@
-/**
- * mna/brain.ts — LLM-driven query parser for M&A deals.
- *
- * Uses OpenRouter function calling (tool use) to convert
- * natural language queries into structured filters.
- * The LLM never sees raw data — it only calls search_deals().
- */
-
 import type { ParsedQuery, DealFilter } from "./bot.js";
-
-// ── Types ───────────────────────────────────────────────────
 
 export interface BrainConfig {
   apiKey: string;
@@ -17,8 +7,6 @@ export interface BrainConfig {
 }
 
 const LLM_BASE_URL = process.env.LLM_BASE_URL;
-
-// ── Function Definition (tool for the LLM) ──────────────────
 
 const SEARCH_DEALS_TOOL = {
   type: "function" as const,
@@ -86,8 +74,6 @@ const SEARCH_DEALS_TOOL = {
   },
 };
 
-// ── System Prompt ───────────────────────────────────────────
-
 const SYSTEM_PROMPT = `You are an M&A deals search assistant. When a user asks about business deals, call the search_deals function with the right filters.
 
 Rules:
@@ -102,8 +88,6 @@ Rules:
 - "asking price" / "price" → field: "asking_price"
 - "SDE" / "owner benefit" → field: "sde"
 - Always call search_deals. Never respond with plain text.`;
-
-// ── OpenRouter Call (with function calling) ──────────────────
 
 export async function callOpenRouter(
   messages: Array<{ role: string; content: string }>,
@@ -157,8 +141,6 @@ async function callWithTools(
   return data.choices?.[0]?.message;
 }
 
-// ── Parse Action (for platform agent) ───────────────────────
-
 interface AgentAction {
   reasoning: string;
   tool: string;
@@ -182,8 +164,6 @@ export function parseAction(raw: string): AgentAction | null {
   return null;
 }
 
-// ── Main ────────────────────────────────────────────────────
-
 export async function parseQuery(
   query: string,
   config: BrainConfig,
@@ -198,14 +178,12 @@ export async function parseQuery(
   try {
     const message = await callWithTools(messages, config);
 
-    // Extract function call arguments
     const toolCall = message?.tool_calls?.[0];
     if (toolCall?.function?.name === "search_deals") {
       const args = JSON.parse(toolCall.function.arguments);
 
       console.log(`   ✓ Function called: search_deals(${JSON.stringify(args)})`);
 
-      // Validate filters
       const filters: DealFilter[] = (args.filters || []).filter(
         (f: any) =>
           ["asking_price", "annual_revenue", "ebitda", "sde"].includes(f.field) &&
@@ -222,7 +200,6 @@ export async function parseQuery(
       };
     }
 
-    // Fallback: if model returned content instead of tool call, try parse it
     if (message?.content) {
       console.log(`   ⚠ No function call, falling back to content parse`);
       const match = message.content.match(/\{[\s\S]*\}/);
@@ -243,6 +220,5 @@ export async function parseQuery(
     console.error(`   ✗ Function calling failed: ${err.message}`);
   }
 
-  // Absolute fallback
   return { filters: [], limit: 20 };
 }
