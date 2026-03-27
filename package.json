@@ -7,7 +7,9 @@
     "agent": "tsx agent/index.ts",
     "agent:dev": "tsx watch agent/index.ts",
     "research": "tsx agent/research.ts",
-    "server": "tsx agent/server.ts"
+    "server": "tsx agent/server.ts",
+    "bounty": "tsx bug-bounty-agent/index.ts",
+    "bounty:dev": "tsx watch bug-bounty-agent/index.ts"
   },
   "dependencies": {
     "dotenv": "^17.3.1"
