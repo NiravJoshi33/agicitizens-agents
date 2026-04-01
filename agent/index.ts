@@ -18,9 +18,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(__dirname, "../.env") });
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { callOpenRouter, parseAction } from "./brain";
 import type { BrainConfig } from "./brain";
 import { executeResearch } from "./bot";
+import {
+  loadKeypairFromEnv,
+  requestFaucet,
+  signPayment,
+  signMessage,
+  getBalances,
+} from "./solana";
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -43,6 +49,8 @@ if (!OPENROUTER_API_KEY) {
 interface BotState {
   apiKey: string;
   agentName: string;
+  biddedTaskIds?: string[];
+  deliveredTaskIds?: string[];
 }
 
 function loadState(): BotState | null {
@@ -132,90 +140,167 @@ async function fetchPlatformSpec(): Promise<string> {
   }
 }
 
-// ── LLM-Driven Registration ────────────────────────────────
+// ── Deterministic Registration (Solana x-payment) ──────────
 
-async function runPlatformAction(
-  task: string,
-  platformSpec: string,
-  state: BotState | null,
-  config: BrainConfig,
-): Promise<string> {
-  const stateContext = state
-    ? `You are already registered. Your API key is: ${state.apiKey}\nYour agent name is: ${state.agentName}`
-    : "You are NOT registered yet.";
-
-  const messages: Array<{ role: string; content: string }> = [
-    {
-      role: "system",
-      content: `You are an autonomous AI agent. You interact with a platform API using HTTP requests.
-
-## Your State
-${stateContext}
-
-## Platform API Base URL
-${PLATFORM_API}
-
-## Platform Spec (citizen.md)
-${platformSpec}
-
-## Tools
-1. http_request — {"method": "GET|POST|PATCH|DELETE", "url": "full URL", "body": "JSON string", "headers": "JSON string of extra headers"}
-2. done — {"result": "what happened"}
-
-## Rules
-- Respond with ONE JSON object: {"reasoning": "...", "tool": "...", "input": {...}}
-- For auth requests: {"Authorization": "Bearer ${state?.apiKey ?? "<api_key>"}"}
-- Read error responses carefully — they contain hints on what to fix
-- The payment header is lowercase: x-payment (not X-Payment)
-- Payment info is at GET /payments/info (not /x402/info)`,
-    },
-    { role: "user", content: task },
-  ];
-
-  for (let i = 0; i < 10; i++) {
-    const raw = await callOpenRouter(messages, config);
-    const action = parseAction(raw);
-
-    if (!action) {
-      messages.push({ role: "assistant", content: raw });
-      messages.push({ role: "user", content: 'Respond with valid JSON: {"reasoning": "...", "tool": "...", "input": {...}}' });
-      continue;
-    }
-
-    if (action.tool === "done") return action.input.result ?? "Done";
-
-    if (action.tool === "http_request") {
-      const { method = "GET", url, body, headers: rawHeaders } = action.input;
-      console.log(`   [${method}] ${url}`);
-
-      try {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (rawHeaders) {
-          try { Object.assign(headers, JSON.parse(rawHeaders)); } catch {}
-        }
-        const opts: RequestInit = { method, headers, signal: AbortSignal.timeout(15_000) };
-        if (body && method !== "GET") opts.body = body;
-
-        const res = await fetch(url, opts);
-        const text = await res.text();
-        const truncated = text.length > 3000 ? text.slice(0, 3000) + "...(truncated)" : text;
-
-        console.log(`   → ${res.status} (${text.length} bytes)`);
-
-        messages.push({ role: "assistant", content: raw });
-        messages.push({ role: "user", content: `HTTP ${res.status}\n${truncated}\n\nNext action?` });
-      } catch (err: any) {
-        messages.push({ role: "assistant", content: raw });
-        messages.push({ role: "user", content: `Request failed: ${err.message}\n\nNext action?` });
-      }
-      continue;
-    }
-
-    messages.push({ role: "assistant", content: raw });
-    messages.push({ role: "user", content: `Unknown tool "${action.tool}". Use http_request or done.` });
+async function registerAgent(): Promise<BotState | null> {
+  const keypair = loadKeypairFromEnv();
+  if (!keypair) {
+    console.error("✗ AGENT_WALLET_KEYPAIR is required in .env for registration");
+    return null;
   }
 
-  return "Max iterations reached";
+  const wallet = keypair.publicKey.toBase58();
+  console.log(`   Wallet: ${wallet}`);
+
+  // Step 1: Check balances
+  const balances = await getBalances(keypair.publicKey);
+  console.log(`   Balances: ${balances.sol} SOL, ${balances.usdc} USDC`);
+
+  // Step 2: Request faucet if needed
+  if (balances.usdc < 1) {
+    console.log("   Requesting faucet USDC...");
+    const faucetRes = await requestFaucet(wallet, PLATFORM_API);
+    console.log(`   ${faucetRes.message}`);
+    if (!faucetRes.ok) {
+      console.warn("   ⚠ Faucet failed — you may need to fund the wallet manually");
+    }
+    // Wait for faucet tx to confirm
+    await new Promise(r => setTimeout(r, 3000));
+    const newBalances = await getBalances(keypair.publicKey);
+    console.log(`   Updated balances: ${newBalances.sol} SOL, ${newBalances.usdc} USDC`);
+  }
+
+  // Step 3: Check name availability
+  console.log(`   Checking availability for "${AGENT_NAME}"...`);
+  const checkRes = await fetch(`${PLATFORM_API}/agents/check-availability`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: AGENT_NAME, wallet }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const checkData = await checkRes.json().catch(() => ({})) as any;
+
+  if (!checkRes.ok) {
+    console.error(`   ✗ Availability check failed (${checkRes.status}): ${JSON.stringify(checkData)}`);
+    return null;
+  }
+
+  if (checkData.nameTaken || checkData.walletTaken) {
+    console.log(`   Name/wallet already registered — attempting auth challenge...`);
+    return await challengeAuth(keypair, wallet);
+  }
+
+  console.log("   ✓ Name available");
+
+  // Step 4: Get payment info
+  console.log("   Fetching payment info...");
+  const payRes = await fetch(`${PLATFORM_API}/payments/info`, {
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payInfo = await payRes.json().catch(() => ({})) as any;
+  console.log(`   Payment: ${payInfo.amount} ${payInfo.currency} → ${payInfo.recipient}`);
+
+  const amountBaseUnits = Math.round(parseFloat(payInfo.amount || "1") * 1e6);
+
+  // Step 5: Sign USDC transfer (x-payment) using platform's mint
+  console.log("   Signing USDC payment transaction...");
+  const { xPayment, error: signError } = await signPayment(
+    keypair,
+    payInfo.recipient,
+    amountBaseUnits,
+    true, // recipient is ATA
+    payInfo.mint, // use the mint from platform's /payments/info
+  );
+
+  if (signError || !xPayment) {
+    console.error(`   ✗ ${signError}`);
+    return null;
+  }
+  console.log(`   ✓ Signed (${xPayment.length} chars base64)`);
+
+  // Step 6: Register with x-payment header
+  console.log("   Registering agent...");
+  const regRes = await fetch(`${PLATFORM_API}/agents/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-payment": xPayment,
+    },
+    body: JSON.stringify({
+      name: AGENT_NAME,
+      wallet,
+      categories: ["research"],
+      description: "Autonomous crypto research agent. Fetches live market data from CoinGecko and DeFiLlama, runs LLM analysis, and delivers structured research reports with risk scoring and sentiment analysis.",
+      basePrice: "2.00",
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  const regData = await regRes.json().catch(() => ({})) as any;
+
+  if (!regRes.ok) {
+    console.error(`   ✗ Registration failed (${regRes.status}): ${JSON.stringify(regData)}`);
+    return null;
+  }
+
+  const apiKey = regData.apiKey;
+  if (!apiKey) {
+    console.error("   ✗ No apiKey in registration response");
+    console.log(`   Response: ${JSON.stringify(regData)}`);
+    return null;
+  }
+
+  console.log(`   ✓ Registered! API key: ${apiKey.slice(0, 12)}...`);
+  const state: BotState = { apiKey, agentName: AGENT_NAME };
+  saveState(state);
+  return state;
+}
+
+// ── Challenge-Response Auth (for already-registered wallets) ─
+
+async function challengeAuth(keypair: ReturnType<typeof loadKeypairFromEnv>, wallet: string): Promise<BotState | null> {
+  if (!keypair) return null;
+
+  try {
+    // Request challenge
+    const challengeRes = await fetch(`${PLATFORM_API}/auth/challenge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const challengeData = await challengeRes.json().catch(() => ({})) as any;
+    const challenge = challengeData.challenge;
+    if (!challenge) {
+      console.error("   ✗ No challenge received");
+      return null;
+    }
+
+    // Sign challenge
+    const signature = signMessage(keypair, challenge);
+
+    // Verify
+    const verifyRes = await fetch(`${PLATFORM_API}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet, challenge, signature }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const verifyData = await verifyRes.json().catch(() => ({})) as any;
+
+    if (!verifyRes.ok || !verifyData.apiKey) {
+      console.error(`   ✗ Auth failed (${verifyRes.status}): ${JSON.stringify(verifyData)}`);
+      return null;
+    }
+
+    console.log(`   ✓ Authenticated via challenge! API key: ${verifyData.apiKey.slice(0, 12)}...`);
+    const state: BotState = { apiKey: verifyData.apiKey, agentName: AGENT_NAME };
+    saveState(state);
+    return state;
+  } catch (err: any) {
+    console.error(`   ✗ Challenge auth error: ${err.message}`);
+    return null;
+  }
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -243,31 +328,10 @@ async function main() {
       saveState(state);
       console.log(`✓ Using API key from .env\n`);
     } else {
-      console.log("⟳ Not registered. Asking the brain to register...\n");
-      const result = await runPlatformAction(
-        `Register as a new agent on the platform.
-
-Agent details:
-- name: "${AGENT_NAME}"
-- categories: ["research"]
-- description: "Autonomous crypto research agent. Fetches live market data from CoinGecko and DeFiLlama, runs LLM analysis, and delivers structured research reports with risk scoring and sentiment analysis."
-- basePrice: "2.00"
-
-Steps to follow (from citizen.md):
-1. POST /agents/check-availability to verify name is free
-2. GET /payments/info to see payment requirements
-3. For now, try registering and report what the API returns. If payment is required, report the payment details.
-
-Report back the full API response.`,
-        platformSpec,
-        state,
-        config,
-      );
-
-      console.log(`\n   Registration result: ${result}\n`);
-      state = loadState();
+      console.log("⟳ Not registered. Starting Solana-based registration...\n");
+      state = await registerAgent();
       if (!state) {
-        console.log("⚠ Registration incomplete. Set AGICITIZENS_API_KEY in .env to skip.\n");
+        console.log("⚠ Registration failed. Set AGICITIZENS_API_KEY in .env to skip.\n");
         return;
       }
     }
@@ -297,8 +361,15 @@ Report back the full API response.`,
 
   // ── Task loop: poll → bid → deliver ─────────────────────
 
-  const biddedTasks = new Set<string>();   // tasks we already bid on
-  const deliveredTasks = new Set<string>(); // tasks we already delivered
+  // Restore bid/deliver tracking from persisted state
+  const biddedTasks = new Set<string>(state!.biddedTaskIds ?? []);
+  const deliveredTasks = new Set<string>(state!.deliveredTaskIds ?? []);
+
+  const persistTracking = () => {
+    state!.biddedTaskIds = [...biddedTasks];
+    state!.deliveredTaskIds = [...deliveredTasks];
+    saveState(state!);
+  };
 
   const poll = async () => {
     // ── Phase 1: Find OPEN tasks and bid ──────────────────
@@ -322,9 +393,15 @@ Report back the full API response.`,
         if (bidRes.ok) {
           console.log(`   ✓ Bid placed: ${bidPrice} USDC`);
         } else {
-          console.warn(`   ⚠ Bid failed (${bidRes.status}): ${JSON.stringify(bidRes.data).slice(0, 100)}`);
+          const msg = JSON.stringify(bidRes.data).slice(0, 120);
+          if (msg.includes("pending bid")) {
+            console.log(`   ℹ Already bid on ${taskId} — skipping`);
+          } else {
+            console.warn(`   ⚠ Bid failed (${bidRes.status}): ${msg}`);
+          }
         }
         biddedTasks.add(taskId);
+        persistTracking();
       }
     } catch (err: any) {
       console.error(`⚠ Poll (open tasks) error: ${err.message}`);
@@ -361,6 +438,7 @@ Report back the full API response.`,
         }
 
         deliveredTasks.add(taskId);
+        persistTracking();
       }
     } catch (err: any) {
       console.error(`⚠ Poll (my tasks) error: ${err.message}`);
@@ -396,6 +474,7 @@ Report back the full API response.`,
         }
 
         deliveredTasks.add(`disputed-${taskId}`);
+        persistTracking();
       }
     } catch {}
 
